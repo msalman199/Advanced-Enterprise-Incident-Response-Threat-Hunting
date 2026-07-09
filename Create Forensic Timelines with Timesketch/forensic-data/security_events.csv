@@ -1,0 +1,6 @@
+timestamp,source,event_id,description,user,computer
+2024-01-15T10:30:00Z,Security,4624,Successful logon,admin,WORKSTATION01
+2024-01-15T10:35:00Z,Security,4625,Failed logon attempt,guest,WORKSTATION01
+2024-01-15T10:40:00Z,Security,4648,Logon using explicit credentials,admin,WORKSTATION01
+2024-01-15T11:00:00Z,Security,4634,Account logoff,admin,WORKSTATION01
+2024-01-15T11:15:00Z,Security,4720,User account created,administrator,WORKSTATION01
