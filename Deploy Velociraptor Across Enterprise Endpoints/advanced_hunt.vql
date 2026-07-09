@@ -1,0 +1,12 @@
+-- Hunt for potential lateral movement
+SELECT client_id, Name, Pid, Cmdline, Username
+FROM source(artifact="Linux.Sys.Pslist") 
+WHERE (Cmdline =~ "ssh.*-o.*StrictHostKeyChecking=no"
+   OR Cmdline =~ "scp.*-o.*StrictHostKeyChecking=no"
+   OR Name =~ "nc|netcat" AND Cmdline =~ "-l.*-p")
+   
+-- Monitor file system changes in sensitive directories  
+SELECT client_id, FullPath, Size, Mode, Mtime
+FROM source(artifact="Linux.Sys.Find")
+WHERE FullPath =~ "/(etc|root|home).*\.(sh|py|pl|rb)$"
+  AND Mtime > now() - 3600
