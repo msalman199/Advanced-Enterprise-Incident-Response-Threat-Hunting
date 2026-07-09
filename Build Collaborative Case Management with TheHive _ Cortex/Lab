@@ -1,0 +1,36 @@
+cat > lab_summary.txt << EOF
+=== TheHive + Cortex Lab Summary ===
+
+Case ID: $CASE_ID
+TheHive URL: http://localhost:9000
+Cortex URL: http://localhost:9001
+
+Services Status:
+- TheHive: Running on port 9000
+- Cortex: Running on port 9001
+- Elasticsearch: Running on port 9200
+- Cassandra: Running on port 9042
+
+Created Resources:
+- Security Team organization
+- Analyst user account
+- Malware incident template
+- Sample incident case with observables
+- Automated analysis workflows
+- Response automation scripts
+
+Key Features Demonstrated:
+- Collaborative case management
+- Observable analysis automation
+- Integration between TheHive and Cortex
+- Automated response workflows
+- Template-based incident handling
+
+Next Steps:
+- Explore additional analyzers in Cortex
+- Create custom case templates
+- Implement advanced automation rules
+- Configure external threat intelligence feeds
+EOF
+
+cat lab_summary.txt
