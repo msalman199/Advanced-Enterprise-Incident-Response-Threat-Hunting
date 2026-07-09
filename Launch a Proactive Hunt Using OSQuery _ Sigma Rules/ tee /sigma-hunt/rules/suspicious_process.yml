@@ -1,0 +1,32 @@
+title: Suspicious Process Execution
+id: 12345678-1234-1234-1234-123456789012
+description: Detects execution of potentially suspicious processes
+author: Security Analyst
+date: 2024/01/01
+references:
+    - https://attack.mitre.org/techniques/T1059/
+logsource:
+    product: linux
+    service: osquery
+    definition: 'Requirements: OSQuery running with process monitoring'
+detection:
+    selection:
+        name:
+            - 'nc'
+            - 'netcat'
+            - 'ncat'
+            - 'socat'
+            - 'wget'
+            - 'curl'
+        cmdline|contains:
+            - '/tmp/'
+            - '/dev/shm/'
+            - 'bash -i'
+            - 'sh -i'
+    condition: selection
+falsepositives:
+    - Legitimate administrative activities
+level: medium
+tags:
+    - attack.execution
+    - attack.t1059
