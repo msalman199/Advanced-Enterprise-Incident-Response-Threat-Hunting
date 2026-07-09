@@ -1,0 +1,376 @@
+Collect Triage Data with CyLR and Correlate in ELK
+Objectives
+By completing this lab, you will:
+
+Install and configure CyLR for rapid endpoint data collection
+Set up the ELK stack (Elasticsearch, Logstash, Kibana) for data analysis
+Configure Logstash to parse and ingest CyLR output
+Create Kibana visualizations for triage data analysis
+Perform correlation analysis on collected forensic artifacts
+Prerequisites
+Basic Linux command-line knowledge
+Understanding of log analysis concepts
+Familiarity with JSON data structures
+Basic knowledge of digital forensics principles
+Lab Environment
+Al Nafi provides a Linux-based cloud machine for this lab. Simply click Start Lab to access your environment. The machine is bare metal with no pre-installed tools, so you'll install all required software during the lab.
+
+Task 1: Install and Configure Required Tools
+Subtask 1.1: Install Java and Dependencies
+# Update system packages
+sudo apt update && sudo apt upgrade -y
+
+# Install Java 11 (required for ELK stack)
+sudo apt install openjdk-11-jdk wget curl unzip -y
+
+# Verify Java installation
+java -version
+Subtask 1.2: Install Elasticsearch
+# Add Elasticsearch repository
+wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee /etc/apt/sources.list.d/elastic-7.x.list
+
+# Install Elasticsearch
+sudo apt update
+sudo apt install elasticsearch -y
+
+# Configure Elasticsearch
+sudo nano /etc/elasticsearch/elasticsearch.yml
+Add these configurations to the file:
+
+cluster.name: cylr-analysis
+node.name: node-1
+network.host: localhost
+http.port: 9200
+discovery.type: single-node
+Subtask 1.3: Install Logstash and Kibana
+# Install Logstash and Kibana
+sudo apt install logstash kibana -y
+
+# Configure Kibana
+sudo nano /etc/kibana/kibana.yml
+Add these configurations:
+
+server.port: 5601
+server.host: "localhost"
+elasticsearch.hosts: ["http://localhost:9200"]
+Subtask 1.4: Start ELK Services
+# Enable and start services
+sudo systemctl enable elasticsearch logstash kibana
+sudo systemctl start elasticsearch
+
+# Wait for Elasticsearch to start
+sleep 30
+
+# Start remaining services
+sudo systemctl start logstash kibana
+
+# Verify services are running
+sudo systemctl status elasticsearch logstash kibana
+Task 2: Install and Configure CyLR
+Subtask 2.1: Download and Install CyLR
+# Create working directory
+mkdir ~/cylr-lab && cd ~/cylr-lab
+
+# Download CyLR (Linux version)
+wget https://github.com/orlikoski/CyLR/releases/latest/download/CyLR_linux-x64.zip
+
+# Extract CyLR
+unzip CyLR_linux-x64.zip
+chmod +x CyLR
+
+# Verify installation
+./CyLR --help
+Subtask 2.2: Create CyLR Collection Configuration
+# Create custom collection configuration
+nano cylr-config.txt
+Add the following configuration:
+
+# CyLR Collection Configuration
+/var/log/auth.log
+/var/log/syslog
+/var/log/kern.log
+/home/*/.bash_history
+/etc/passwd
+/etc/shadow
+/etc/hosts
+/proc/*/cmdline
+/proc/*/environ
+Subtask 2.3: Run CyLR Data Collection
+# Run CyLR with custom configuration
+sudo ./CyLR -c cylr-config.txt -o cylr-output.zip
+
+# Extract collected data
+unzip cylr-output.zip -d cylr-data/
+
+# Examine collected data structure
+ls -la cylr-data/
+find cylr-data/ -type f | head -20
+Task 3: Configure Logstash for CyLR Data Processing
+Subtask 3.1: Create Logstash Configuration
+# Create Logstash pipeline configuration
+sudo nano /etc/logstash/conf.d/cylr-pipeline.conf
+Add the following configuration:
+
+input {
+  file {
+    path => "/home/*/cylr-lab/cylr-data/**/*"
+    start_position => "beginning"
+    sincedb_path => "/dev/null"
+    codec => "plain"
+    add_field => { "source_type" => "cylr_artifact" }
+  }
+}
+
+filter {
+  # Add timestamp
+  mutate {
+    add_field => { "collection_timestamp" => "%{@timestamp}" }
+  }
+  
+  # Parse file paths
+  grok {
+    match => { "path" => "/home/.*/cylr-lab/cylr-data/(?<artifact_category>[^/]+)/(?<artifact_name>.*)" }
+  }
+  
+  # Process auth.log entries
+  if [path] =~ /auth\.log/ {
+    grok {
+      match => { "message" => "%{SYSLOGTIMESTAMP:timestamp} %{IPORHOST:host} %{PROG:program}(?:\[%{POSINT:pid}\])?: %{GREEDYDATA:log_message}" }
+    }
+    mutate {
+      add_field => { "log_type" => "authentication" }
+    }
+  }
+  
+  # Process bash history
+  if [path] =~ /bash_history/ {
+    mutate {
+      add_field => { "log_type" => "command_history" }
+      add_field => { "command" => "%{message}" }
+    }
+  }
+  
+  # Process system files
+  if [path] =~ /(passwd|shadow|hosts)/ {
+    mutate {
+      add_field => { "log_type" => "system_config" }
+    }
+  }
+}
+
+output {
+  elasticsearch {
+    hosts => ["localhost:9200"]
+    index => "cylr-triage-%{+YYYY.MM.dd}"
+  }
+  
+  stdout {
+    codec => rubydebug
+  }
+}
+Subtask 3.2: Test and Start Logstash Pipeline
+# Test Logstash configuration
+sudo /usr/share/logstash/bin/logstash --config.test_and_exit --path.settings /etc/logstash -f /etc/logstash/conf.d/cylr-pipeline.conf
+
+# Restart Logstash with new configuration
+sudo systemctl restart logstash
+
+# Monitor Logstash logs
+sudo tail -f /var/log/logstash/logstash-plain.log
+Task 4: Analyze and Visualize Data in Kibana
+Subtask 4.1: Access Kibana and Create Index Pattern
+# Check if Kibana is accessible
+curl -I http://localhost:5601
+
+# Open browser to Kibana (if GUI available) or use curl for API calls
+echo "Access Kibana at: http://localhost:5601"
+Create index pattern via API:
+
+# Wait for data to be indexed
+sleep 60
+
+# Create index pattern
+curl -X POST "localhost:5601/api/saved_objects/index-pattern/cylr-triage-*" \
+  -H "Content-Type: application/json" \
+  -H "kbn-xsrf: true" \
+  -d '{
+    "attributes": {
+      "title": "cylr-triage-*",
+      "timeFieldName": "@timestamp"
+    }
+  }'
+Subtask 4.2: Query and Analyze Triage Data
+# Search for authentication events
+curl -X GET "localhost:9200/cylr-triage-*/_search?pretty" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": {
+      "match": {
+        "log_type": "authentication"
+      }
+    },
+    "size": 10
+  }'
+
+# Search for command history
+curl -X GET "localhost:9200/cylr-triage-*/_search?pretty" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": {
+      "match": {
+        "log_type": "command_history"
+      }
+    },
+    "size": 10
+  }'
+
+# Get aggregation of artifact types
+curl -X GET "localhost:9200/cylr-triage-*/_search?pretty" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "size": 0,
+    "aggs": {
+      "artifact_types": {
+        "terms": {
+          "field": "log_type.keyword"
+        }
+      }
+    }
+  }'
+Subtask 4.3: Create Analysis Queries
+# Create script for common triage queries
+nano triage-analysis.sh
+Add the following script:
+
+#!/bin/bash
+
+echo "=== CyLR Triage Data Analysis ==="
+
+echo "1. Authentication Events:"
+curl -s -X GET "localhost:9200/cylr-triage-*/_search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": {"match": {"log_type": "authentication"}},
+    "size": 5
+  }' | jq '.hits.hits[]._source | select(.program) | {timestamp: .timestamp, program: .program, message: .log_message}'
+
+echo -e "\n2. Suspicious Commands:"
+curl -s -X GET "localhost:9200/cylr-triage-*/_search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": {
+      "bool": {
+        "must": [
+          {"match": {"log_type": "command_history"}},
+          {"regexp": {"command.keyword": ".*(sudo|su|wget|curl|nc|netcat|chmod|rm).*"}}
+        ]
+      }
+    },
+    "size": 10
+  }' | jq '.hits.hits[]._source.command'
+
+echo -e "\n3. System Configuration Changes:"
+curl -s -X GET "localhost:9200/cylr-triage-*/_search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": {"match": {"log_type": "system_config"}},
+    "size": 5
+  }' | jq '.hits.hits[]._source | {file: .path, content: .message}'
+
+echo -e "\n4. Data Collection Summary:"
+curl -s -X GET "localhost:9200/cylr-triage-*/_search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "size": 0,
+    "aggs": {
+      "by_type": {"terms": {"field": "log_type.keyword"}},
+      "by_category": {"terms": {"field": "artifact_category.keyword"}}
+    }
+  }' | jq '.aggregations'
+# Make script executable and run
+chmod +x triage-analysis.sh
+./triage-analysis.sh
+Subtask 4.4: Generate Triage Report
+# Create comprehensive triage report
+nano generate-report.sh
+Add the following script:
+
+#!/bin/bash
+
+REPORT_FILE="cylr-triage-report-$(date +%Y%m%d-%H%M%S).txt"
+
+echo "CyLR Triage Analysis Report" > $REPORT_FILE
+echo "Generated: $(date)" >> $REPORT_FILE
+echo "=================================" >> $REPORT_FILE
+
+# Get total document count
+TOTAL_DOCS=$(curl -s -X GET "localhost:9200/cylr-triage-*/_count" | jq '.count')
+echo -e "\nTotal Artifacts Collected: $TOTAL_DOCS" >> $REPORT_FILE
+
+# Get breakdown by type
+echo -e "\nArtifact Breakdown:" >> $REPORT_FILE
+curl -s -X GET "localhost:9200/cylr-triage-*/_search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "size": 0,
+    "aggs": {
+      "types": {"terms": {"field": "log_type.keyword", "size": 20}}
+    }
+  }' | jq -r '.aggregations.types.buckets[] | "- \(.key): \(.doc_count) items"' >> $REPORT_FILE
+
+# Get recent authentication events
+echo -e "\nRecent Authentication Events:" >> $REPORT_FILE
+curl -s -X GET "localhost:9200/cylr-triage-*/_search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": {"match": {"log_type": "authentication"}},
+    "sort": [{"@timestamp": {"order": "desc"}}],
+    "size": 10
+  }' | jq -r '.hits.hits[]._source | select(.timestamp and .program) | "- \(.timestamp) \(.program): \(.log_message)"' >> $REPORT_FILE
+
+echo -e "\nReport saved to: $REPORT_FILE"
+cat $REPORT_FILE
+# Generate the report
+chmod +x generate-report.sh
+./generate-report.sh
+Verification and Testing
+Verify Data Collection and Processing
+# Check Elasticsearch indices
+curl -X GET "localhost:9200/_cat/indices/cylr-*?v"
+
+# Verify data ingestion
+curl -X GET "localhost:9200/cylr-triage-*/_search?size=0" | jq '.hits.total.value'
+
+# Test search functionality
+curl -X GET "localhost:9200/cylr-triage-*/_search?q=log_type:authentication&size=1" | jq '.hits.hits[0]._source'
+
+# Check Logstash processing
+sudo systemctl status logstash
+Troubleshooting
+Common Issues:
+
+Elasticsearch won't start: Check Java installation and memory settings
+Logstash parsing errors: Verify file paths and permissions in configuration
+No data in Kibana: Ensure Logstash pipeline is processing files correctly
+Permission denied: Run CyLR with sudo for system file access
+Debug Commands:
+
+# Check service logs
+sudo journalctl -u elasticsearch -f
+sudo journalctl -u logstash -f
+
+# Verify file permissions
+ls -la cylr-data/
+sudo chmod -R 644 cylr-data/
+
+# Test Elasticsearch connectivity
+curl -X GET "localhost:9200/_cluster/health?pretty"
+Conclusion
+You have successfully completed a comprehensive digital forensics triage workflow using CyLR for rapid data collection and the ELK stack for analysis and correlation. This lab demonstrated how to:
+
+Collect forensic artifacts efficiently using CyLR
+Process and index triage data with Logstash
+Perform correlation analysis using Elasticsearch queries
+Generate actionable intelligence from collected artifacts
+This workflow is essential for incident response and digital forensics professionals who need to quickly assess system compromise and identify indicators of malicious activity. The combination of automated collection and powerful analysis capabilities enables rapid triage decisions in time-critical investigations.
