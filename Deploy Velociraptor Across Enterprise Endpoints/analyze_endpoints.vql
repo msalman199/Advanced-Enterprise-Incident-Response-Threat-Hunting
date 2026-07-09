@@ -1,0 +1,11 @@
+-- Query all connected clients
+SELECT client_id, os_info.hostname, os_info.platform, 
+       last_seen_at, first_seen_at
+FROM clients()
+ORDER BY last_seen_at DESC
+
+-- Query running processes across endpoints
+SELECT client_id, Name, Pid, Ppid, Cmdline
+FROM source(artifact="Linux.Sys.Pslist")
+WHERE Name =~ "(ssh|bash|python)"
+LIMIT 50
