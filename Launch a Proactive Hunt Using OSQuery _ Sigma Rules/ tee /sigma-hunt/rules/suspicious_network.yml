@@ -1,0 +1,25 @@
+title: Suspicious Network Connections
+id: 87654321-4321-4321-4321-210987654321
+description: Detects suspicious outbound network connections
+author: Security Analyst
+date: 2024/01/01
+logsource:
+    product: linux
+    service: osquery
+detection:
+    selection:
+        remote_port:
+            - 4444
+            - 5555
+            - 6666
+            - 7777
+            - 8888
+            - 9999
+        state: 'ESTABLISHED'
+    condition: selection
+falsepositives:
+    - Legitimate applications using these ports
+level: high
+tags:
+    - attack.command_and_control
+    - attack.t1071
