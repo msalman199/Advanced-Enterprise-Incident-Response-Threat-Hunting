@@ -1,0 +1,35 @@
+{
+    "name": "Custom Threat Intelligence Layer",
+    "versions": {
+        "attack": "12",
+        "navigator": "4.8.1",
+        "layer": "4.4"
+    },
+    "domain": "enterprise-attack",
+    "description": "Custom layer based on threat intelligence analysis",
+    "techniques": [
+        {
+            "techniqueID": "T1566.001",
+            "color": "#ff6666",
+            "comment": "Spearphishing Attachment - High priority based on recent intel",
+            "score": 90
+        },
+        {
+            "techniqueID": "T1059.001",
+            "color": "#ffcc66",
+            "comment": "PowerShell execution observed in recent campaigns",
+            "score": 75
+        },
+        {
+            "techniqueID": "T1055",
+            "color": "#ff9999",
+            "comment": "Process injection technique commonly used",
+            "score": 80
+        }
+    ],
+    "gradient": {
+        "colors": ["#ffffff", "#ff0000"],
+        "minValue": 0,
+        "maxValue": 100
+    }
+}
