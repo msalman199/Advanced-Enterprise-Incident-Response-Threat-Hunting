@@ -1,0 +1,44 @@
+{
+    "name": "Detection Coverage Assessment",
+    "versions": {
+        "attack": "12",
+        "navigator": "4.8.1",
+        "layer": "4.4"
+    },
+    "domain": "enterprise-attack",
+    "description": "Assessment of current detection capabilities",
+    "techniques": [
+        {
+            "techniqueID": "T1566.001",
+            "color": "#00ff00",
+            "comment": "Full detection coverage implemented",
+            "metadata": [
+                {"name": "Detection Tool", "value": "Email Security Gateway"},
+                {"name": "Coverage Level", "value": "High"}
+            ]
+        },
+        {
+            "techniqueID": "T1059.001",
+            "color": "#ffff00",
+            "comment": "Partial detection coverage",
+            "metadata": [
+                {"name": "Detection Tool", "value": "PowerShell Logging"},
+                {"name": "Coverage Level", "value": "Medium"}
+            ]
+        },
+        {
+            "techniqueID": "T1055",
+            "color": "#ff0000",
+            "comment": "Limited detection coverage - needs improvement",
+            "metadata": [
+                {"name": "Detection Tool", "value": "Basic Process Monitoring"},
+                {"name": "Coverage Level", "value": "Low"}
+            ]
+        }
+    ],
+    "gradient": {
+        "colors": ["#ff0000", "#ffff00", "#00ff00"],
+        "minValue": 0,
+        "maxValue": 100
+    }
+}
