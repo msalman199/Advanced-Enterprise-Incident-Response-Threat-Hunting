@@ -1,0 +1,12 @@
+-- Detect suspicious processes
+SELECT client_id, Name, Pid, Cmdline, 
+       timestamp(epoch=CreateTime) AS created
+FROM source(artifact="Linux.Sys.Pslist")
+WHERE Name =~ "(nc|netcat|nmap|wget|curl)" 
+   OR Cmdline =~ "(bash -i|sh -i|/dev/tcp)"
+
+-- Monitor network connections
+SELECT client_id, Pid, Name, LocalAddr, RemoteAddr, State
+FROM source(artifact="Linux.Network.Netstat")
+WHERE State = "ESTABLISHED" 
+  AND RemoteAddr !~ "^(127\.|10\.|192\.168\.|172\.)"
