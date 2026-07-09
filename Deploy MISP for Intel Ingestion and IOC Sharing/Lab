@@ -1,0 +1,311 @@
+ Deploy MISP for Intel Ingestion and IOC Sharing
+Learning Objectives
+By completing this lab, you will:
+
+Deploy and configure MISP (Malware Information Sharing Platform) on Linux
+Integrate external threat intelligence feeds into MISP
+Create, manage, and share Indicators of Compromise (IOCs)
+Track IOCs across enterprise systems using MISP's correlation features
+Prerequisites
+Basic Linux command-line knowledge
+Understanding of cybersecurity concepts (IOCs, threat intelligence)
+Familiarity with web browsers and JSON data formats
+Network connectivity for downloading packages and feeds
+Lab Environment
+Al Nafi provides a Linux-based cloud machine for this lab. Simply click Start Lab to access your dedicated environment. The provided Linux machine is bare metal with no pre-installed tools, so you will install all required components during the lab.
+
+Task 1: Set up MISP Platform on Al Nafi Cloud
+Subtask 1.1: System Preparation and Dependencies
+Update the system and install required packages:
+
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y apache2 mariadb-server php php-cli php-dev php-json php-mysql php-opcache php-readline php-redis php-xml php-mbstring php-zip php-intl php-bcmath php-gd php-fpm libapache2-mod-php git curl wget unzip redis-server python3 python3-pip
+Start and enable services:
+
+sudo systemctl start apache2 mariadb redis-server
+sudo systemctl enable apache2 mariadb redis-server
+Subtask 1.2: Database Configuration
+Secure MariaDB installation:
+
+sudo mysql_secure_installation
+Follow prompts: Set root password, remove anonymous users, disable remote root login, remove test database.
+
+Create MISP database:
+
+sudo mysql -u root -p
+In MySQL prompt:
+
+CREATE DATABASE misp;
+CREATE USER 'misp'@'localhost' IDENTIFIED BY 'MISPdbpass123!';
+GRANT ALL PRIVILEGES ON misp.* TO 'misp'@'localhost';
+FLUSH PRIVILEGES;
+EXIT;
+Subtask 1.3: Download and Install MISP
+Clone MISP repository:
+
+cd /var/www/html
+sudo git clone https://github.com/MISP/MISP.git
+cd MISP
+sudo git checkout tags/$(git describe --tags `git rev-list --tags --max-count=1`)
+sudo git submodule update --init --recursive
+Set proper permissions:
+
+sudo chown -R www-data:www-data /var/www/html/MISP
+sudo chmod -R 755 /var/www/html/MISP
+Subtask 1.4: Install PHP Dependencies
+Install Composer and PHP dependencies:
+
+cd /var/www/html/MISP/app
+sudo -u www-data php composer.phar install --no-dev
+If composer.phar doesn't exist:
+
+sudo -u www-data curl -sS https://getcomposer.org/installer | php
+sudo -u www-data php composer.phar install --no-dev
+Subtask 1.5: Configure MISP
+Copy configuration files:
+
+sudo -u www-data cp -a /var/www/html/MISP/app/Config/bootstrap.default.php /var/www/html/MISP/app/Config/bootstrap.php
+sudo -u www-data cp -a /var/www/html/MISP/app/Config/database.default.php /var/www/html/MISP/app/Config/database.php
+sudo -u www-data cp -a /var/www/html/MISP/app/Config/core.default.php /var/www/html/MISP/app/Config/core.php
+sudo -u www-data cp -a /var/www/html/MISP/app/Config/config.default.php /var/www/html/MISP/app/Config/config.php
+Edit database configuration:
+
+sudo nano /var/www/html/MISP/app/Config/database.php
+Update database settings:
+
+public $default = array(
+    'datasource' => 'Database/Mysql',
+    'persistent' => false,
+    'host' => 'localhost',
+    'login' => 'misp',
+    'password' => 'MISPdbpass123!',
+    'database' => 'misp',
+    'prefix' => '',
+    'encoding' => 'utf8',
+);
+Subtask 1.6: Initialize MISP Database
+Run database initialization:
+
+cd /var/www/html/MISP/app/Console
+sudo -u www-data ./cake Admin setSetting "MISP.baseurl" "http://localhost/MISP"
+sudo -u www-data ./cake Admin setSetting "MISP.python_bin" "/usr/bin/python3"
+Import database schema:
+
+sudo -u www-data ./cake Admin createDatabase
+sudo -u www-data ./cake Admin migrate
+Subtask 1.7: Configure Apache
+Create MISP virtual host:
+
+sudo nano /etc/apache2/sites-available/misp.conf
+Add configuration:
+
+<VirtualHost *:80>
+    ServerName localhost
+    DocumentRoot /var/www/html/MISP/app/webroot
+    
+    <Directory /var/www/html/MISP/app/webroot>
+        Options -Indexes
+        AllowOverride all
+        Require all granted
+    </Directory>
+    
+    LogLevel warn
+    ErrorLog /var/log/apache2/misp_error.log
+    CustomLog /var/log/apache2/misp_access.log combined
+</VirtualHost>
+Enable site and modules:
+
+sudo a2ensite misp
+sudo a2enmod rewrite
+sudo a2dissite 000-default
+sudo systemctl restart apache2
+Task 2: Integrate Threat Intel Feeds
+Subtask 2.1: Access MISP Web Interface
+Open browser and navigate to http://localhost/MISP
+
+Default credentials:
+
+Username: admin@admin.test
+Password: admin
+Change password immediately after first login.
+
+Subtask 2.2: Configure Feed Sources
+Navigate to Administration → List Feeds
+
+Add CIRCL OSINT Feed:
+
+Click Add Feed
+
+Fill in details:
+
+Name: CIRCL OSINT Feed
+Provider: CIRCL
+URL: https://www.circl.lu/doc/misp/feed-osint/
+Source Format: MISP Feed
+Fixed Event: No
+Target Event: 0
+Published: Yes
+Override IDS: No
+Click Submit
+
+Subtask 2.3: Enable Additional Feeds
+Add Botvrij.eu Feed:
+
+Click Add Feed
+
+Configure:
+
+Name: Botvrij.eu
+Provider: Botvrij.eu
+URL: https://www.botvrij.eu/data/feed-osint/
+Source Format: MISP Feed
+Published: Yes
+Click Submit
+
+Subtask 2.4: Fetch Feed Data
+For each configured feed:
+
+Click Preview to test connectivity
+Click Fetch and store to import IOCs
+Monitor Jobs section for import progress
+Verify feed import:
+
+cd /var/www/html/MISP/app/Console
+sudo -u www-data ./cake Server fetchFeed 1
+sudo -u www-data ./cake Server fetchFeed 2
+Task 3: Share IOCs and Track Them Across Enterprise Systems
+Subtask 3.1: Create Custom Event with IOCs
+Navigate to Event Actions → Add Event
+
+Fill event details:
+
+Date: Current date
+Distribution: Your organization only
+Threat Level: Medium
+Analysis: Initial
+Event Info: Custom IOC Collection - Lab Exercise
+Click Submit
+
+Subtask 3.2: Add IOC Attributes
+In the created event, add various IOC types:
+
+Add IP Address IOC:
+
+Click Add Attribute
+Configure:
+Category: Network activity
+Type: ip-dst
+Value: 192.168.1.100
+Comment: Suspicious C2 server
+IDS: Yes
+Add Domain IOC:
+
+Click Add Attribute
+Configure:
+Category: Network activity
+Type: domain
+Value: malicious-domain.com
+Comment: Known malware domain
+IDS: Yes
+Add File Hash IOC:
+
+Click Add Attribute
+Configure:
+Category: Payload delivery
+Type: sha256
+Value: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+Comment: Malware sample hash
+IDS: Yes
+Subtask 3.3: Configure IOC Correlation
+Enable correlation settings:
+
+Navigate to Administration → Server Settings & Maintenance
+
+Go to MISP Settings tab
+
+Configure correlation settings:
+
+MISP.correlation_default_event_threshold: 5
+MISP.correlation_max_correlations: 100
+Click Update for each setting
+
+Subtask 3.4: Export IOCs for SIEM Integration
+Export IOCs in various formats:
+
+Export as STIX:
+
+Go to your event
+Click Download as... → STIX
+Save file for SIEM integration
+Export as CSV:
+
+Navigate to Attributes → Search Attributes
+Set search criteria
+Click Download results as CSV
+Generate API Export:
+
+curl -H "Authorization: YOUR_API_KEY" \
+     -H "Accept: application/json" \
+     -H "Content-type: application/json" \
+     http://localhost/MISP/attributes/restSearch/json
+Subtask 3.5: Set Up Automated IOC Sharing
+Configure synchronization:
+
+Navigate to Sync Actions → List Servers
+Click Add Server (for demonstration)
+Configure sharing parameters:
+Base URL: https://partner-misp.example.com
+Organization: Partner Organization
+Authkey: (Partner's API key)
+Push: Yes
+Pull: Yes
+Subtask 3.6: Monitor IOC Correlations
+Check correlation results:
+
+Navigate to your event
+Click View Correlations
+Review correlated attributes across events
+Analyze correlation graph for threat patterns
+Generate correlation report:
+
+cd /var/www/html/MISP/app/Console
+sudo -u www-data ./cake Admin generateCorrelations
+Subtask 3.7: Create IOC Watchlist
+Set up automated alerting:
+
+Navigate to Event Actions → Automation
+
+Create new automation rule:
+
+Name: Critical IOC Alert
+Conditions: Attribute type = ip-dst AND TLP = RED
+Actions: Send email notification
+Test automation with new IOC addition
+
+Verification Steps
+Verify MISP deployment:
+
+# Check Apache status
+sudo systemctl status apache2
+
+# Check database connectivity
+mysql -u misp -p misp -e "SHOW TABLES;"
+
+# Verify feed imports
+curl -s http://localhost/MISP/feeds/index | grep -i "feed"
+
+# Check correlation engine
+cd /var/www/html/MISP/app/Console
+sudo -u www-data ./cake Admin getSetting MISP.correlation_default_event_threshold
+Access MISP dashboard and confirm:
+
+Events are visible with proper IOCs
+Feeds are actively importing
+Correlations are functioning
+Export capabilities work correctly
+Conclusion
+You have successfully deployed MISP as a comprehensive threat intelligence platform. This lab demonstrated how to set up MISP for IOC ingestion from external feeds, create custom threat intelligence events, and establish IOC sharing mechanisms across enterprise systems.
+
+MISP now serves as your centralized hub for threat intelligence, enabling automated correlation of indicators, streamlined sharing with security partners, and enhanced threat detection capabilities. The platform's correlation engine helps identify patterns across different security events, while the standardized export formats ensure seamless integration with existing security tools and SIEM systems.
+
+This deployment provides the foundation for building a robust threat intelligence program that can scale with organizational security needs and facilitate collaborative defense against emerging threats.
