@@ -1,0 +1,890 @@
+ Parse Unified Logs for Suspicious macOS Activity
+Learning Objectives
+By completing this lab, you will:
+
+Extract and analyze macOS unified logs using open-source tools
+Identify suspicious system activities and security events
+Cross-reference log data with system artifacts for comprehensive analysis
+Develop skills in macOS forensic investigation techniques
+Prerequisites
+Basic understanding of macOS system architecture
+Familiarity with command-line operations
+Knowledge of log analysis concepts
+Understanding of common attack vectors on macOS systems
+Lab Environment
+Al Nafi provides Linux-based cloud machines for this lab. Simply click Start Lab to access your dedicated environment. The provided Linux machine is bare metal with no pre-installed tools, so you will install all required tools during the lab exercises.
+
+Task 1: Set Up Analysis Environment and Tools
+Subtask 1.1: Install Required Tools
+Install essential tools for macOS log analysis:
+
+# Update system packages
+sudo apt update && sudo apt upgrade -y
+
+# Install Python and pip
+sudo apt install python3 python3-pip git wget curl -y
+
+# Install unified log parser tools
+pip3 install --user unifiedlog-parser
+
+# Install additional analysis tools
+sudo apt install hexdump xxd file binutils -y
+
+# Install text processing tools
+sudo apt install jq xmlstarlet -y
+Subtask 1.2: Download Sample macOS Unified Logs
+Create sample unified log data for analysis:
+
+# Create working directory
+mkdir -p ~/macos-log-analysis
+cd ~/macos-log-analysis
+
+# Create sample unified log entries (simulating real macOS logs)
+cat > sample_unified.log << 'EOF'
+2024-01-15 10:30:15.123456-0800 0x12345 Default 0x0 1234 0 kernel: (AppleACPIPlatform) AppleACPIPlatform::free - 0x0
+2024-01-15 10:30:16.234567-0800 0x12346 Info 0x0 1235 0 loginwindow: User authentication succeeded for user: admin
+2024-01-15 10:30:17.345678-0800 0x12347 Error 0x0 1236 0 sshd: Failed password for invalid user hacker from 192.168.1.100 port 22 ssh2
+2024-01-15 10:30:18.456789-0800 0x12348 Default 0x0 1237 0 sudo: admin : TTY=console ; PWD=/Users/admin ; USER=root ; COMMAND=/bin/bash
+2024-01-15 10:30:19.567890-0800 0x12349 Info 0x0 1238 0 com.apple.xpc.launchd: Service exited with abnormal code: 1
+2024-01-15 10:30:20.678901-0800 0x1234a Error 0x0 1239 0 kernel: (Sandbox) Sandbox: chrome(1240) deny(1) file-write-create /System/Library/LaunchDaemons/
+2024-01-15 10:30:21.789012-0800 0x1234b Default 0x0 1241 0 WindowServer: CGXDisplayDidWakeNotification [1234]: posting kCGSDisplayDidWake
+2024-01-15 10:30:22.890123-0800 0x1234c Error 0x0 1242 0 com.apple.SecurityServer: Failed to verify code signature for /tmp/malicious_binary
+2024-01-15 10:30:23.901234-0800 0x1234d Info 0x0 1243 0 com.apple.loginwindow: User logged out: admin
+2024-01-15 10:30:24.012345-0800 0x1234e Default 0x0 1244 0 kernel: (AppleKeyStore) AppleKeyStore::handleUserClient - user client connection established
+EOF
+
+# Create additional suspicious activity logs
+cat > suspicious_activity.log << 'EOF'
+2024-01-15 11:15:30.123456-0800 0x2345a Error 0x0 2001 0 com.apple.xpc.launchd: Service "com.malware.agent" tried to hijack endpoint "com.apple.security.authhost"
+2024-01-15 11:15:31.234567-0800 0x2345b Default 0x0 2002 0 kernel: (Sandbox) Sandbox: unknown(2003) deny(1) network-outbound 192.168.1.200:4444
+2024-01-15 11:15:32.345678-0800 0x2345c Info 0x0 2004 0 com.apple.CoreServices.coreservicesd: Application "/Applications/Suspicious App.app" is not notarized
+2024-01-15 11:15:33.456789-0800 0x2345d Error 0x0 2005 0 com.apple.security.pboxd: Process 2006 attempted to access keychain without proper entitlements
+2024-01-15 11:15:34.567890-0800 0x2345e Default 0x0 2007 0 sudo: root : TTY=unknown ; PWD=/ ; USER=root ; COMMAND=/usr/bin/dscl . -create /Users/backdoor
+EOF
+Task 2: Parse and Analyze Unified Logs
+Subtask 2.1: Basic Log Parsing
+Parse unified logs to extract structured data:
+
+# Create log parsing script
+cat > parse_logs.py << 'EOF'
+#!/usr/bin/env python3
+import re
+import json
+from datetime import datetime
+
+def parse_unified_log(log_file):
+    """Parse macOS unified log format"""
+    parsed_entries = []
+    
+    with open(log_file, 'r') as f:
+        for line in f:
+            # Parse unified log format
+            pattern = r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+[-+]\d{4}) (0x[0-9a-f]+) (\w+) (0x[0-9a-f]+) (\d+) (\d+) ([^:]+): (.+)'
+            match = re.match(pattern, line.strip())
+            
+            if match:
+                entry = {
+                    'timestamp': match.group(1),
+                    'thread_id': match.group(2),
+                    'log_level': match.group(3),
+                    'activity_id': match.group(4),
+                    'pid': int(match.group(5)),
+                    'ttl': int(match.group(6)),
+                    'process': match.group(7),
+                    'message': match.group(8)
+                }
+                parsed_entries.append(entry)
+    
+    return parsed_entries
+
+def analyze_suspicious_patterns(entries):
+    """Identify suspicious patterns in log entries"""
+    suspicious_indicators = []
+    
+    for entry in entries:
+        message = entry['message'].lower()
+        process = entry['process'].lower()
+        
+        # Check for authentication failures
+        if 'failed password' in message or 'authentication failed' in message:
+            suspicious_indicators.append({
+                'type': 'Authentication Failure',
+                'severity': 'Medium',
+                'entry': entry,
+                'reason': 'Failed authentication attempt detected'
+            })
+        
+        # Check for privilege escalation
+        if 'sudo' in process and 'root' in message:
+            suspicious_indicators.append({
+                'type': 'Privilege Escalation',
+                'severity': 'High',
+                'entry': entry,
+                'reason': 'Sudo command executed with root privileges'
+            })
+        
+        # Check for sandbox violations
+        if 'sandbox' in process and 'deny' in message:
+            suspicious_indicators.append({
+                'type': 'Sandbox Violation',
+                'severity': 'High',
+                'entry': entry,
+                'reason': 'Process attempted unauthorized system access'
+            })
+        
+        # Check for code signature failures
+        if 'code signature' in message or 'not notarized' in message:
+            suspicious_indicators.append({
+                'type': 'Code Signature Issue',
+                'severity': 'Medium',
+                'entry': entry,
+                'reason': 'Unsigned or unnotarized binary detected'
+            })
+        
+        # Check for network anomalies
+        if 'network-outbound' in message and 'deny' in message:
+            suspicious_indicators.append({
+                'type': 'Network Anomaly',
+                'severity': 'High',
+                'entry': entry,
+                'reason': 'Blocked outbound network connection'
+            })
+    
+    return suspicious_indicators
+
+# Main execution
+if __name__ == "__main__":
+    import sys
+    
+    if len(sys.argv) != 2:
+        print("Usage: python3 parse_logs.py <log_file>")
+        sys.exit(1)
+    
+    log_file = sys.argv[1]
+    
+    # Parse logs
+    entries = parse_unified_log(log_file)
+    print(f"Parsed {len(entries)} log entries")
+    
+    # Analyze for suspicious patterns
+    suspicious = analyze_suspicious_patterns(entries)
+    
+    print(f"\nFound {len(suspicious)} suspicious indicators:")
+    for indicator in suspicious:
+        print(f"\n[{indicator['severity']}] {indicator['type']}")
+        print(f"Process: {indicator['entry']['process']}")
+        print(f"Time: {indicator['entry']['timestamp']}")
+        print(f"Message: {indicator['entry']['message']}")
+        print(f"Reason: {indicator['reason']}")
+        print("-" * 60)
+EOF
+
+chmod +x parse_logs.py
+
+# Parse sample logs
+python3 parse_logs.py sample_unified.log
+Subtask 2.2: Advanced Pattern Analysis
+Create advanced analysis for specific threat indicators:
+
+# Create advanced analysis script
+cat > advanced_analysis.py << 'EOF'
+#!/usr/bin/env python3
+import re
+import json
+from collections import defaultdict, Counter
+from datetime import datetime, timedelta
+
+class MacOSLogAnalyzer:
+    def __init__(self):
+        self.threat_patterns = {
+            'malware_indicators': [
+                r'malware|trojan|virus|backdoor',
+                r'suspicious.*app|unknown.*binary',
+                r'hijack.*endpoint|service.*hijack'
+            ],
+            'persistence_mechanisms': [
+                r'launchd.*plist|launch.*agent|launch.*daemon',
+                r'cron|periodic|startup.*item',
+                r'login.*hook|authorization.*plugin'
+            ],
+            'privilege_escalation': [
+                r'sudo.*root|su.*root',
+                r'setuid|setgid',
+                r'authorization.*bypass'
+            ],
+            'data_exfiltration': [
+                r'network.*outbound.*deny',
+                r'file.*read.*sensitive',
+                r'keychain.*access.*unauthorized'
+            ]
+        }
+    
+    def parse_log_entry(self, line):
+        """Parse individual log entry"""
+        pattern = r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+[-+]\d{4}) (0x[0-9a-f]+) (\w+) (0x[0-9a-f]+) (\d+) (\d+) ([^:]+): (.+)'
+        match = re.match(pattern, line.strip())
+        
+        if match:
+            return {
+                'timestamp': match.group(1),
+                'thread_id': match.group(2),
+                'log_level': match.group(3),
+                'activity_id': match.group(4),
+                'pid': int(match.group(5)),
+                'ttl': int(match.group(6)),
+                'process': match.group(7),
+                'message': match.group(8),
+                'raw_line': line.strip()
+            }
+        return None
+    
+    def detect_threats(self, entries):
+        """Detect various threat categories"""
+        threats = defaultdict(list)
+        
+        for entry in entries:
+            message_lower = entry['message'].lower()
+            process_lower = entry['process'].lower()
+            combined_text = f"{message_lower} {process_lower}"
+            
+            for threat_type, patterns in self.threat_patterns.items():
+                for pattern in patterns:
+                    if re.search(pattern, combined_text):
+                        threats[threat_type].append({
+                            'entry': entry,
+                            'pattern_matched': pattern,
+                            'confidence': self.calculate_confidence(pattern, combined_text)
+                        })
+        
+        return threats
+    
+    def calculate_confidence(self, pattern, text):
+        """Calculate confidence score for threat detection"""
+        base_score = 0.5
+        
+        # Increase confidence for specific indicators
+        if 'malware' in text or 'trojan' in text:
+            base_score += 0.3
+        if 'deny' in text or 'failed' in text:
+            base_score += 0.2
+        if 'root' in text or 'sudo' in text:
+            base_score += 0.1
+        
+        return min(base_score, 1.0)
+    
+    def timeline_analysis(self, entries):
+        """Analyze timeline for suspicious patterns"""
+        timeline = defaultdict(list)
+        
+        for entry in entries:
+            timestamp = entry['timestamp'][:19]  # Remove timezone for grouping
+            timeline[timestamp].append(entry)
+        
+        # Look for rapid successive events (potential automated attacks)
+        suspicious_bursts = []
+        for timestamp, events in timeline.items():
+            if len(events) > 3:  # More than 3 events in same second
+                suspicious_bursts.append({
+                    'timestamp': timestamp,
+                    'event_count': len(events),
+                    'events': events
+                })
+        
+        return suspicious_bursts
+    
+    def process_analysis(self, entries):
+        """Analyze process behavior patterns"""
+        process_stats = defaultdict(lambda: {
+            'count': 0,
+            'error_count': 0,
+            'privilege_operations': 0,
+            'network_operations': 0
+        })
+        
+        for entry in entries:
+            process = entry['process']
+            message = entry['message'].lower()
+            
+            process_stats[process]['count'] += 1
+            
+            if entry['log_level'] == 'Error':
+                process_stats[process]['error_count'] += 1
+            
+            if 'sudo' in message or 'root' in message:
+                process_stats[process]['privilege_operations'] += 1
+            
+            if 'network' in message:
+                process_stats[process]['network_operations'] += 1
+        
+        # Identify suspicious processes
+        suspicious_processes = []
+        for process, stats in process_stats.items():
+            risk_score = 0
+            
+            # High error rate
+            if stats['count'] > 0 and stats['error_count'] / stats['count'] > 0.5:
+                risk_score += 30
+            
+            # High privilege operations
+            if stats['privilege_operations'] > 2:
+                risk_score += 40
+            
+            # Network operations with errors
+            if stats['network_operations'] > 0 and stats['error_count'] > 0:
+                risk_score += 30
+            
+            if risk_score > 50:
+                suspicious_processes.append({
+                    'process': process,
+                    'risk_score': risk_score,
+                    'stats': stats
+                })
+        
+        return suspicious_processes
+
+def main():
+    analyzer = MacOSLogAnalyzer()
+    
+    # Analyze both log files
+    all_entries = []
+    
+    for log_file in ['sample_unified.log', 'suspicious_activity.log']:
+        print(f"\nAnalyzing {log_file}...")
+        
+        with open(log_file, 'r') as f:
+            for line in f:
+                entry = analyzer.parse_log_entry(line)
+                if entry:
+                    all_entries.append(entry)
+    
+    print(f"\nTotal entries analyzed: {len(all_entries)}")
+    
+    # Threat detection
+    threats = analyzer.detect_threats(all_entries)
+    print(f"\n=== THREAT ANALYSIS ===")
+    for threat_type, detections in threats.items():
+        print(f"\n{threat_type.upper().replace('_', ' ')} ({len(detections)} detections):")
+        for detection in detections:
+            entry = detection['entry']
+            print(f"  - Process: {entry['process']}")
+            print(f"    Time: {entry['timestamp']}")
+            print(f"    Message: {entry['message']}")
+            print(f"    Confidence: {detection['confidence']:.2f}")
+            print()
+    
+    # Timeline analysis
+    bursts = analyzer.timeline_analysis(all_entries)
+    if bursts:
+        print(f"\n=== SUSPICIOUS ACTIVITY BURSTS ===")
+        for burst in bursts:
+            print(f"Time: {burst['timestamp']} - {burst['event_count']} events")
+    
+    # Process analysis
+    suspicious_procs = analyzer.process_analysis(all_entries)
+    if suspicious_procs:
+        print(f"\n=== SUSPICIOUS PROCESSES ===")
+        for proc in suspicious_procs:
+            print(f"Process: {proc['process']}")
+            print(f"Risk Score: {proc['risk_score']}")
+            print(f"Stats: {proc['stats']}")
+            print()
+
+if __name__ == "__main__":
+    main()
+EOF
+
+chmod +x advanced_analysis.py
+
+# Run advanced analysis
+python3 advanced_analysis.py
+Task 3: Cross-Reference with System Artifacts
+Subtask 3.1: Create System Artifact Database
+Build a database of system artifacts for correlation:
+
+# Create artifact correlation script
+cat > artifact_correlation.py << 'EOF'
+#!/usr/bin/env python3
+import json
+import re
+from datetime import datetime
+from collections import defaultdict
+
+class ArtifactCorrelator:
+    def __init__(self):
+        self.artifacts = {
+            'processes': {},
+            'network_connections': {},
+            'file_operations': {},
+            'user_activities': {}
+        }
+    
+    def create_sample_artifacts(self):
+        """Create sample system artifacts for correlation"""
+        # Sample process artifacts
+        self.artifacts['processes'] = {
+            '1240': {
+                'name': 'chrome',
+                'path': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+                'parent_pid': '1',
+                'user': 'admin',
+                'start_time': '2024-01-15 10:25:00',
+                'suspicious_flags': ['sandbox_violation']
+            },
+            '2003': {
+                'name': 'unknown',
+                'path': '/tmp/suspicious_binary',
+                'parent_pid': '1',
+                'user': 'root',
+                'start_time': '2024-01-15 11:10:00',
+                'suspicious_flags': ['unsigned', 'temp_location']
+            },
+            '2006': {
+                'name': 'malicious_app',
+                'path': '/Applications/Suspicious App.app/Contents/MacOS/main',
+                'parent_pid': '1',
+                'user': 'admin',
+                'start_time': '2024-01-15 11:14:00',
+                'suspicious_flags': ['not_notarized', 'keychain_access']
+            }
+        }
+        
+        # Sample network artifacts
+        self.artifacts['network_connections'] = {
+            '192.168.1.100:22': {
+                'type': 'inbound',
+                'protocol': 'tcp',
+                'service': 'ssh',
+                'first_seen': '2024-01-15 10:30:17',
+                'attempts': 5,
+                'status': 'failed'
+            },
+            '192.168.1.200:4444': {
+                'type': 'outbound',
+                'protocol': 'tcp',
+                'service': 'unknown',
+                'first_seen': '2024-01-15 11:15:31',
+                'attempts': 1,
+                'status': 'blocked'
+            }
+        }
+        
+        # Sample file artifacts
+        self.artifacts['file_operations'] = {
+            '/System/Library/LaunchDaemons/': {
+                'operation': 'write_attempt',
+                'process': 'chrome',
+                'result': 'denied',
+                'timestamp': '2024-01-15 10:30:20'
+            },
+            '/tmp/malicious_binary': {
+                'operation': 'signature_verification',
+                'process': 'SecurityServer',
+                'result': 'failed',
+                'timestamp': '2024-01-15 10:30:22'
+            },
+            '/Users/backdoor': {
+                'operation': 'user_creation',
+                'process': 'dscl',
+                'result': 'attempted',
+                'timestamp': '2024-01-15 11:15:34'
+            }
+        }
+    
+    def correlate_with_logs(self, log_entries):
+        """Correlate log entries with system artifacts"""
+        correlations = []
+        
+        for entry in log_entries:
+            pid = str(entry['pid'])
+            message = entry['message']
+            process = entry['process']
+            
+            correlation = {
+                'log_entry': entry,
+                'correlated_artifacts': []
+            }
+            
+            # Correlate with process artifacts
+            if pid in self.artifacts['processes']:
+                proc_artifact = self.artifacts['processes'][pid]
+                correlation['correlated_artifacts'].append({
+                    'type': 'process',
+                    'artifact': proc_artifact,
+                    'correlation_strength': self.calculate_correlation_strength(entry, proc_artifact)
+                })
+            
+            # Correlate with network artifacts
+            for network_key, network_artifact in self.artifacts['network_connections'].items():
+                if network_key.split(':')[0] in message:
+                    correlation['correlated_artifacts'].append({
+                        'type': 'network',
+                        'artifact': network_artifact,
+                        'correlation_strength': 0.8
+                    })
+            
+            # Correlate with file artifacts
+            for file_path, file_artifact in self.artifacts['file_operations'].items():
+                if file_path in message:
+                    correlation['correlated_artifacts'].append({
+                        'type': 'file',
+                        'artifact': file_artifact,
+                        'correlation_strength': 0.9
+                    })
+            
+            if correlation['correlated_artifacts']:
+                correlations.append(correlation)
+        
+        return correlations
+    
+    def calculate_correlation_strength(self, log_entry, artifact):
+        """Calculate correlation strength between log entry and artifact"""
+        strength = 0.5  # Base strength
+        
+        # Time proximity
+        if 'start_time' in artifact:
+            # Simplified time comparison
+            strength += 0.2
+        
+        # Process name match
+        if artifact.get('name', '').lower() in log_entry['process'].lower():
+            strength += 0.3
+        
+        # Suspicious flags
+        if 'suspicious_flags' in artifact and artifact['suspicious_flags']:
+            strength += 0.2
+        
+        return min(strength, 1.0)
+    
+    def generate_threat_report(self, correlations):
+        """Generate comprehensive threat report"""
+        report = {
+            'summary': {
+                'total_correlations': len(correlations),
+                'high_risk_events': 0,
+                'medium_risk_events': 0,
+                'low_risk_events': 0
+            },
+            'detailed_findings': []
+        }
+        
+        for correlation in correlations:
+            risk_level = self.assess_risk_level(correlation)
+            
+            if risk_level == 'high':
+                report['summary']['high_risk_events'] += 1
+            elif risk_level == 'medium':
+                report['summary']['medium_risk_events'] += 1
+            else:
+                report['summary']['low_risk_events'] += 1
+            
+            finding = {
+                'risk_level': risk_level,
+                'timestamp': correlation['log_entry']['timestamp'],
+                'process': correlation['log_entry']['process'],
+                'message': correlation['log_entry']['message'],
+                'correlated_artifacts': correlation['correlated_artifacts']
+            }
+            
+            report['detailed_findings'].append(finding)
+        
+        return report
+    
+    def assess_risk_level(self, correlation):
+        """Assess risk level based on correlation data"""
+        risk_score = 0
+        
+        for artifact in correlation['correlated_artifacts']:
+            risk_score += artifact['correlation_strength']
+            
+            # Additional risk factors
+            if artifact['type'] == 'process':
+                if 'suspicious_flags' in artifact['artifact']:
+                    risk_score += len(artifact['artifact']['suspicious_flags']) * 0.2
+            
+            elif artifact['type'] == 'network':
+                if artifact['artifact'].get('status') == 'blocked':
+                    risk_score += 0.5
+            
+            elif artifact['type'] == 'file':
+                if artifact['artifact'].get('result') in ['denied', 'failed']:
+                    risk_score += 0.3
+        
+        if risk_score >= 2.0:
+            return 'high'
+        elif risk_score >= 1.0:
+            return 'medium'
+        else:
+            return 'low'
+
+def main():
+    correlator = ArtifactCorrelator()
+    correlator.create_sample_artifacts()
+    
+    # Parse log entries
+    log_entries = []
+    for log_file in ['sample_unified.log', 'suspicious_activity.log']:
+        with open(log_file, 'r') as f:
+            for line in f:
+                pattern = r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+[-+]\d{4}) (0x[0-9a-f]+) (\w+) (0x[0-9a-f]+) (\d+) (\d+) ([^:]+): (.+)'
+                match = re.match(pattern, line.strip())
+                
+                if match:
+                    entry = {
+                        'timestamp': match.group(1),
+                        'thread_id': match.group(2),
+                        'log_level': match.group(3),
+                        'activity_id': match.group(4),
+                        'pid': int(match.group(5)),
+                        'ttl': int(match.group(6)),
+                        'process': match.group(7),
+                        'message': match.group(8)
+                    }
+                    log_entries.append(entry)
+    
+    # Perform correlation
+    correlations = correlator.correlate_with_logs(log_entries)
+    
+    # Generate threat report
+    report = correlator.generate_threat_report(correlations)
+    
+    print("=== ARTIFACT CORRELATION REPORT ===")
+    print(f"Total Correlations: {report['summary']['total_correlations']}")
+    print(f"High Risk Events: {report['summary']['high_risk_events']}")
+    print(f"Medium Risk Events: {report['summary']['medium_risk_events']}")
+    print(f"Low Risk Events: {report['summary']['low_risk_events']}")
+    
+    print("\n=== DETAILED FINDINGS ===")
+    for finding in report['detailed_findings']:
+        print(f"\n[{finding['risk_level'].upper()}] {finding['timestamp']}")
+        print(f"Process: {finding['process']}")
+        print(f"Message: {finding['message']}")
+        print("Correlated Artifacts:")
+        for artifact in finding['correlated_artifacts']:
+            print(f"  - Type: {artifact['type']}")
+            print(f"    Strength: {artifact['correlation_strength']:.2f}")
+            print(f"    Details: {artifact['artifact']}")
+        print("-" * 60)
+
+if __name__ == "__main__":
+    main()
+EOF
+
+chmod +x artifact_correlation.py
+
+# Run correlation analysis
+python3 artifact_correlation.py
+Subtask 3.2: Generate Investigation Summary
+Create a comprehensive investigation summary:
+
+# Create investigation summary script
+cat > investigation_summary.py << 'EOF'
+#!/usr/bin/env python3
+import json
+from datetime import datetime
+
+def generate_investigation_summary():
+    """Generate comprehensive investigation summary"""
+    
+    summary = {
+        'investigation_metadata': {
+            'analyst': 'Security Analyst',
+            'investigation_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'case_id': 'MACOS-LOG-2024-001',
+            'evidence_sources': ['sample_unified.log', 'suspicious_activity.log']
+        },
+        'executive_summary': {
+            'threat_level': 'HIGH',
+            'confidence': 'MEDIUM',
+            'key_findings': [
+                'Multiple authentication failures detected from external IP',
+                'Privilege escalation attempts using sudo',
+                'Sandbox violations by Chrome browser',
+                'Unsigned binary execution attempts',
+                'Potential backdoor user creation attempt',
+                'Blocked outbound network connections to suspicious IP'
+            ],
+            'recommended_actions': [
+                'Block IP address 192.168.1.100 at firewall level',
+                'Investigate Chrome browser for potential compromise',
+                'Remove unsigned binaries from /tmp directory',
+                'Review user account creation logs',
+                'Monitor network traffic to 192.168.1.200',
+                'Implement additional endpoint monitoring'
+            ]
+        },
+        'technical_analysis': {
+            'timeline': [
+                {
+                    'time': '10:30:16',
+                    'event': 'User authentication succeeded for admin',
+                    'significance': 'Normal login activity'
+                },
+                {
+                    'time': '10:30:17',
+                    'event': 'SSH authentication failure from 192.168.1.100',
+                    'significance': 'Potential brute force attack'
+                },
+                {
+                    'time': '10:30:18',
+                    'event': 'Sudo command executed by admin',
+                    'significance': 'Privilege escalation'
+                },
+                {
+                    'time': '10:30:20',
+                    'event': 'Chrome attempted to write to system directory',
+                    'significance': 'Sandbox violation - potential compromise'
+                },
+                {
+                    'time': '11:15:30',
+                    'event': 'Service hijacking attempt detected',
+                    'significance': 'Persistence mechanism attempt'
+                },
+                {
+                    'time': '11:15:34',
+                    'event': 'Backdoor user creation attempt',
+                    'significance': 'Persistence mechanism'
+                }
+            ],
+            'iocs': [
+                {
+                    'type': 'IP Address',
+                    'value': '192.168.1.100',
+                    'description': 'Source of SSH brute force attack'
+                },
+                {
+                    'type': 'IP Address',
+                    'value': '192.168.1.200',
+                    'description': 'Destination of blocked outbound connection'
+                },
+                {
+                    'type': 'File Path',
+                    'value': '/tmp/malicious_binary',
+                    'description': 'Unsigned binary with failed signature verification'
+                },
+                {
+                    'type': 'User Account',
+                    'value': 'backdoor',
+                    'description': 'Attempted backdoor user creation'
+                },
+                {
+                    'type': 'Service',
+                    'value': 'com.malware.agent',
+                    'description': 'Malicious service attempting endpoint hijacking'
+                }
+            ]
+        },
+        'risk_assessment': {
+            'attack_vectors': [
+                'SSH brute force attack',
+                'Browser exploitation',
+                'Privilege escalation',
+                'Persistence mechanisms'
+            ],
+            'potential_impact': [
+                'Unauthorized system access',
+                'Data exfiltration',
+                'System compromise',
+                'Lateral movement'
+            ],
+            'mitigation_status': 'PARTIAL - Some attacks blocked by system defenses'
+        }
+    }
+    
+    return summary
+
+def print_summary(summary):
+    """Print formatted investigation summary"""
+    print("=" * 80)
+    print("MACOS UNIFIED LOG INVESTIGATION SUMMARY")
+    print("=" * 80)
+    
+    # Metadata
+    meta = summary['investigation_metadata']
+    print(f"\nCase ID: {meta['case_id']}")
+    print(f"Investigation Date: {meta['investigation_date']}")
+    print(f"Evidence Sources: {', '.join(meta['evidence_sources'])}")
+    
+    # Executive Summary
+    exec_sum = summary['executive_summary']
+    print(f"\n=== EXECUTIVE SUMMARY ===")
+    print(f"Threat Level: {exec_sum['threat_level']}")
+    print(f"Confidence: {exec_sum['confidence']}")
+    
+    print(f"\nKey Findings:")
+    for i, finding in enumerate(exec_sum['key_findings'], 1):
+        print(f"  {i}. {finding}")
+    
+    print(f"\nRecommended Actions:")
+    for i, action in enumerate(exec_sum['recommended_actions'], 1):
+        print(f"  {i}. {action}")
+    
+    # Technical Analysis
+    tech = summary['technical_analysis']
+    print(f"\n=== TECHNICAL ANALYSIS ===")
+    print(f"\nTimeline of Events:")
+    for event in tech['timeline']:
+        print(f"  {event['time']} - {event['event']}")
+        print(f"    Significance: {event['significance']}")
+    
+    print(f"\nIndicators of Compromise (IOCs):")
+    for ioc in tech['iocs']:
+        print(f"  Type: {ioc['type']}")
+        print(f"  Value: {ioc['value']}")
+        print(f"  Description: {ioc['description']}")
+        print()
+    
+    # Risk Assessment
+    risk = summary['risk_assessment']
+    print(f"=== RISK ASSESSMENT ===")
+    print(f"Attack Vectors: {', '.join(risk['attack_vectors'])}")
+    print(f"Potential Impact: {', '.join(risk['potential_impact'])}")
+    print(f"Mitigation Status: {risk['mitigation_status']}")
+    
+    print("\n" + "=" * 80)
+
+def main():
+    summary = generate_investigation_summary()
+    print_summary(summary)
+    
+    # Save summary to file
+    with open('investigation_summary.json', 'w') as f:
+        json.dump(summary, f, indent=2)
+    
+    print(f"\nInvestigation summary saved to: investigation_summary.json")
+
+if __name__ == "__main__":
+    main()
+EOF
+
+chmod +x investigation_summary.py
+
+# Generate investigation summary
+python3 investigation_summary.py
+Verification and Testing
+Verify your analysis results:
+
+# Check all generated files
+echo "=== Generated Analysis Files ==="
+ls -la *.py *.log *.json
+
+# Verify log parsing functionality
+echo -e "\n=== Testing Log Parser ==="
+python3 parse_logs.py sample_unified.log | head -20
+
+# Check correlation results
+echo -e "\n=== Correlation Analysis Results ==="
+python3 artifact_correlation.py | grep -A 5 "HIGH\|MEDIUM"
+
+# Display investigation summary
+echo -e "\n=== Investigation Summary ==="
+cat investigation_summary.json | jq '.executive_summary.key_findings[]'
+Conclusion
+You have successfully completed Lab 17 on parsing macOS unified logs for suspicious activity analysis. Through this lab, you have:
+
+Mastered unified log parsing using Python-based tools to extract structured data from macOS system logs
+Identified suspicious patterns including authentication failures, privilege escalation attempts, sandbox violations, and malware indicators
+Performed correlation analysis by cross-referencing log data with system artifacts to build comprehensive threat intelligence
+Generated professional investigation reports with timelines, IOCs, and actionable recommendations
+These skills are essential for macOS security analysts, incident responders, and digital forensics investigators. The techniques learned enable you to effectively investigate security incidents, identify attack patterns, and provide evidence-based security recommendations in enterprise macOS environments.
+
+The unified log analysis capabilities you've developed are crucial for detecting advanced persistent threats, insider threats, and sophisticated malware campaigns targeting macOS systems in modern security operations centers.
