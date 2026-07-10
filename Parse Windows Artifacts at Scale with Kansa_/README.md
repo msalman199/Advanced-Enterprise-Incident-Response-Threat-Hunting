@@ -1,0 +1,678 @@
+<div align="center">
+
+# 🛡️ Parse Windows Artifacts at Scale with Kansa
+
+### Enterprise-Scale DFIR & IOC Correlation Lab
+
+![Kansa](https://img.shields.io/badge/Kansa-Framework-1E90FF?style=for-the-badge&logo=powershell&logoColor=white)
+![PowerShell](https://img.shields.io/badge/PowerShell-5391FE?style=for-the-badge&logo=powershell&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Pandas](https://img.shields.io/badge/Pandas-150458?style=for-the-badge&logo=pandas&logoColor=white)
+![Windows Event Logs](https://img.shields.io/badge/Windows_Event_Logs-0078D6?style=for-the-badge&logo=windows&logoColor=white)
+![Registry Forensics](https://img.shields.io/badge/Registry_Forensics-00599C?style=for-the-badge&logo=windows&logoColor=white)
+![IOC Correlation](https://img.shields.io/badge/IOC-Correlation-FF4500?style=for-the-badge&logo=elastic&logoColor=white)
+![YARA](https://img.shields.io/badge/YARA-Rules-8A2BE2?style=for-the-badge&logo=yara&logoColor=white)
+![SIEM](https://img.shields.io/badge/SIEM-Integration-32CD32?style=for-the-badge&logo=splunk&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)
+
+</div>
+
+---
+
+## 📚 Table of Contents
+
+- [🎯 Learning Objectives](#-learning-objectives)
+- [📋 Prerequisites](#-prerequisites)
+- [🖥️ Lab Environment](#️-lab-environment)
+- [🚀 Task 1: Deploy Kansa Framework](#-task-1-deploy-kansa-framework)
+- [🔍 Task 2: Parse and Analyze Windows Artifacts](#-task-2-parse-and-analyze-windows-artifacts)
+- [🔗 Task 3: Correlate and Identify IOCs](#-task-3-correlate-and-identify-iocs)
+- [✅ Verification and Testing](#-verification-and-testing)
+- [🗺️ MITRE ATT&CK Mapping](#️-mitre-attck-mapping)
+- [🧩 Troubleshooting](#-troubleshooting)
+- [🏁 Conclusion](#-conclusion)
+
+---
+
+## 🎯 Learning Objectives
+
+| # | Objective |
+|---|-----------|
+| 1 | 🧰 Deploy and configure the Kansa PowerShell framework for enterprise-scale Windows artifact collection |
+| 2 | 🧾 Parse and analyze Windows artifacts including Event Logs, Registry entries, and system files |
+| 3 | 🔗 Correlate collected data to identify Indicators of Compromise (IOCs) |
+| 4 | ⚙️ Implement automated analysis workflows for large-scale incident response |
+
+---
+
+## 📋 Prerequisites
+
+| Requirement | Details |
+|---|---|
+| 🖥️ Windows Administration | Basic understanding of Windows system administration |
+| 🐚 PowerShell Scripting | Familiarity with scripting concepts and syntax |
+| 📜 Event Logs & Registry | Knowledge of Windows Event Log structure and Registry hives |
+| 🌐 Networking & Filesystems | Understanding of network protocols and file systems |
+
+---
+
+## 🖥️ Lab Environment
+
+> ☁️ **Al Nafi** provides a Linux-based cloud machine for this lab. Simply click **Start Lab** to access your environment. The machine is bare metal with no pre-installed tools — all required components are installed during the lab.
+
+---
+
+## 🚀 Task 1: Deploy Kansa Framework
+
+### 🔧 Subtask 1.1: Install Required Dependencies
+
+```bash
+# 📦 Update system and install dependencies
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y git python3 python3-pip powershell curl wget unzip
+
+# 🐍 Install additional Python libraries for data analysis
+pip3 install pandas numpy matplotlib seaborn
+
+# TODO: Verify PowerShell installed correctly with `pwsh -v`
+```
+
+### 📥 Subtask 1.2: Download and Configure Kansa
+
+```bash
+# 🌐 Clone Kansa repository
+cd /opt
+sudo git clone https://github.com/davehull/Kansa.git
+sudo chown -R $USER:$USER /opt/Kansa
+cd /opt/Kansa
+
+# 📁 Create working directory
+mkdir -p ~/kansa-lab/results
+cd ~/kansa-lab
+
+# TODO: Confirm /opt/Kansa contents with `ls -la /opt/Kansa`
+```
+
+### 🗂️ Subtask 1.3: Create Simulated Windows Environment Data
+
+> 💡 Since we're working on Linux, we generate realistic Windows artifact samples to simulate a real DFIR data set.
+
+```bash
+# 📝 Create sample Windows Event Log data
+mkdir -p ~/kansa-lab/sample-data/eventlogs
+cat > ~/kansa-lab/sample-data/eventlogs/Security.evtx.csv << 'EOF'
+TimeCreated,Id,LevelDisplayName,LogName,MachineName,UserId,ProcessId,ThreadId,Message
+2024-01-15T10:30:45.123Z,4624,Information,Security,WORKSTATION01,S-1-5-21-123456789-987654321-111111111-1001,1234,5678,"An account was successfully logged on"
+2024-01-15T10:31:12.456Z,4625,Information,Security,WORKSTATION01,S-1-5-21-123456789-987654321-111111111-1002,1235,5679,"An account failed to log on"
+2024-01-15T10:32:33.789Z,4648,Information,Security,WORKSTATION02,S-1-5-21-123456789-987654321-111111111-1003,1236,5680,"A logon was attempted using explicit credentials"
+EOF
+
+# 🗝️ Create sample Registry data
+mkdir -p ~/kansa-lab/sample-data/registry
+cat > ~/kansa-lab/sample-data/registry/autorun-entries.csv << 'EOF'
+ComputerName,Path,Name,Value,Type
+WORKSTATION01,HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run,SecurityUpdate,C:\Windows\System32\svchost.exe,REG_SZ
+WORKSTATION02,HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run,WindowsDefender,C:\Program Files\Windows Defender\MSASCuiL.exe,REG_SZ
+WORKSTATION03,HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run,SuspiciousApp,C:\Temp\malware.exe,REG_SZ
+EOF
+
+# ⚙️ Create sample process data
+mkdir -p ~/kansa-lab/sample-data/processes
+cat > ~/kansa-lab/sample-data/processes/running-processes.csv << 'EOF'
+ComputerName,ProcessName,ProcessId,ParentProcessId,CommandLine,CreationDate
+WORKSTATION01,explorer.exe,1234,1000,C:\Windows\explorer.exe,2024-01-15T09:00:00Z
+WORKSTATION01,notepad.exe,5678,1234,C:\Windows\System32\notepad.exe document.txt,2024-01-15T10:15:00Z
+WORKSTATION02,powershell.exe,9999,1234,powershell.exe -ExecutionPolicy Bypass -File malicious.ps1,2024-01-15T10:30:00Z
+EOF
+
+# TODO: Add additional sample hosts to widen correlation coverage
+```
+
+---
+
+## 🔍 Task 2: Parse and Analyze Windows Artifacts
+
+### 📊 Subtask 2.1: Create Analysis Scripts — Event Logs
+
+```python
+#!/usr/bin/env python3
+# 📈 analyze_eventlogs.py — Security Event Log Analyzer
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime
+import os
+
+def analyze_security_logs(file_path):
+    """Analyze Windows Security Event Logs"""
+    print("=== Security Event Log Analysis ===")
+
+    df = pd.read_csv(file_path)
+    df['TimeCreated'] = pd.to_datetime(df['TimeCreated'])
+
+    print(f"Total Events: {len(df)}")
+    print(f"Date Range: {df['TimeCreated'].min()} to {df['TimeCreated'].max()}")
+    print(f"Unique Machines: {df['MachineName'].nunique()}")
+
+    event_counts = df['Id'].value_counts()
+    print("\nEvent ID Distribution:")
+    for event_id, count in event_counts.items():
+        event_type = {
+            4624: "Successful Logon",
+            4625: "Failed Logon",
+            4648: "Explicit Credential Use"
+        }.get(event_id, "Unknown")
+        print(f"  {event_id} ({event_type}): {count}")
+
+    # 🚨 Failed logon analysis (potential brute force)
+    failed_logons = df[df['Id'] == 4625]
+    if not failed_logons.empty:
+        print(f"\n⚠️  ALERT: {len(failed_logons)} failed logon attempts detected")
+
+    # 🚨 Explicit credential use (potential lateral movement)
+    explicit_creds = df[df['Id'] == 4648]
+    if not explicit_creds.empty:
+        print(f"⚠️  ALERT: {len(explicit_creds)} explicit credential usage events")
+
+    return df
+
+if __name__ == "__main__":
+    log_file = "/home/ubuntu/kansa-lab/sample-data/eventlogs/Security.evtx.csv"
+    if os.path.exists(log_file):
+        analyze_security_logs(log_file)
+    else:
+        print(f"File not found: {log_file}")
+
+# TODO: Add visualization of event ID distribution using seaborn
+```
+
+### 🗝️ Subtask 2.2: Create Registry Analysis Script
+
+```python
+#!/usr/bin/env python3
+# 🔎 analyze_registry.py — Autorun Entry Analyzer
+import pandas as pd
+import os
+
+def analyze_autorun_entries(file_path):
+    """Analyze Windows Registry Autorun entries for suspicious activity"""
+    print("=== Registry Autorun Analysis ===")
+
+    df = pd.read_csv(file_path)
+    print(f"Total Autorun Entries: {len(df)}")
+    print(f"Affected Computers: {df['ComputerName'].nunique()}")
+
+    suspicious_paths = ['temp', 'tmp', 'appdata', 'programdata', 'users\\public', 'windows\\temp']
+    suspicious_names = ['update', 'security', 'system', 'windows', 'microsoft', 'adobe', 'java']
+
+    print("\n=== Suspicious Autorun Entries ===")
+    for idx, row in df.iterrows():
+        value_lower = row['Value'].lower()
+        name_lower = row['Name'].lower()
+
+        is_suspicious = False
+        reasons = []
+
+        for sus_path in suspicious_paths:
+            if sus_path in value_lower:
+                is_suspicious = True
+                reasons.append(f"Suspicious path: {sus_path}")
+
+        for sus_name in suspicious_names:
+            if sus_name in name_lower and 'malware' in value_lower:
+                is_suspicious = True
+                reasons.append(f"Potential impersonation: {sus_name}")
+
+        if '.exe' in value_lower and ('temp' in value_lower or 'tmp' in value_lower):
+            is_suspicious = True
+            reasons.append("Executable in temp directory")
+
+        if is_suspicious:
+            print(f"\n🚨 SUSPICIOUS ENTRY FOUND:")
+            print(f"  Computer: {row['ComputerName']}")
+            print(f"  Name: {row['Name']}")
+            print(f"  Value: {row['Value']}")
+            print(f"  Reasons: {', '.join(reasons)}")
+
+if __name__ == "__main__":
+    reg_file = "/home/ubuntu/kansa-lab/sample-data/registry/autorun-entries.csv"
+    if os.path.exists(reg_file):
+        analyze_autorun_entries(reg_file)
+    else:
+        print(f"File not found: {reg_file}")
+
+# TODO: Extend suspicious_paths list with organization-specific baselines
+```
+
+### ⚙️ Subtask 2.3: Create Process Analysis Script
+
+```python
+#!/usr/bin/env python3
+# 🖥️ analyze_processes.py — Running Process Analyzer
+import pandas as pd
+import os
+
+def analyze_processes(file_path):
+    """Analyze running processes for suspicious activity"""
+    print("=== Process Analysis ===")
+
+    df = pd.read_csv(file_path)
+    print(f"Total Processes: {len(df)}")
+    print(f"Unique Computers: {df['ComputerName'].nunique()}")
+
+    suspicious_commands = [
+        'executionpolicy bypass', 'hidden', 'encoded',
+        'downloadstring', 'invoke-expression', 'iex', 'malicious'
+    ]
+
+    print("\n=== Suspicious Process Analysis ===")
+    for idx, row in df.iterrows():
+        cmdline_lower = str(row['CommandLine']).lower()
+
+        is_suspicious = False
+        reasons = []
+
+        for sus_cmd in suspicious_commands:
+            if sus_cmd in cmdline_lower:
+                is_suspicious = True
+                reasons.append(f"Suspicious command: {sus_cmd}")
+
+        if 'powershell' in row['ProcessName'].lower() and 'bypass' in cmdline_lower:
+            is_suspicious = True
+            reasons.append("PowerShell execution policy bypass")
+
+        if is_suspicious:
+            print(f"\n🚨 SUSPICIOUS PROCESS FOUND:")
+            print(f"  Computer: {row['ComputerName']}")
+            print(f"  Process: {row['ProcessName']} (PID: {row['ProcessId']})")
+            print(f"  Command Line: {row['CommandLine']}")
+            print(f"  Reasons: {', '.join(reasons)}")
+
+if __name__ == "__main__":
+    proc_file = "/home/ubuntu/kansa-lab/sample-data/processes/running-processes.csv"
+    if os.path.exists(proc_file):
+        analyze_processes(proc_file)
+    else:
+        print(f"File not found: {proc_file}")
+
+# TODO: Add parent-child process tree validation for anomaly detection
+```
+
+---
+
+## 🔗 Task 3: Correlate and Identify IOCs
+
+### 🧬 Subtask 3.1: Create IOC Correlation Script
+
+```python
+#!/usr/bin/env python3
+# 🧩 correlate_iocs.py — Multi-Source IOC Correlator
+import pandas as pd
+import json
+from datetime import datetime
+import os
+
+class IOCCorrelator:
+    def __init__(self):
+        self.iocs = []
+        self.timeline = []
+
+    def add_ioc(self, ioc_type, value, source, computer, timestamp=None, severity="Medium"):
+        """Add an IOC to the correlation database"""
+        ioc = {
+            'type': ioc_type,
+            'value': value,
+            'source': source,
+            'computer': computer,
+            'timestamp': timestamp or datetime.now().isoformat(),
+            'severity': severity
+        }
+        self.iocs.append(ioc)
+        self.timeline.append(ioc)
+
+    def analyze_all_artifacts(self):
+        """Analyze all artifact types and correlate IOCs"""
+        print("=== IOC Correlation Analysis ===")
+        self.analyze_event_logs()
+        self.analyze_registry()
+        self.analyze_processes()
+        self.generate_correlation_report()
+
+    def analyze_event_logs(self):
+        """Extract IOCs from Event Logs"""
+        log_file = "/home/ubuntu/kansa-lab/sample-data/eventlogs/Security.evtx.csv"
+        if not os.path.exists(log_file):
+            return
+        df = pd.read_csv(log_file)
+
+        failed_logons = df[df['Id'] == 4625]
+        for _, row in failed_logons.iterrows():
+            self.add_ioc('failed_logon', row['UserId'], 'Security Event Log',
+                         row['MachineName'], row['TimeCreated'], 'High')
+
+        explicit_creds = df[df['Id'] == 4648]
+        for _, row in explicit_creds.iterrows():
+            self.add_ioc('explicit_credentials', row['UserId'], 'Security Event Log',
+                         row['MachineName'], row['TimeCreated'], 'Medium')
+
+    def analyze_registry(self):
+        """Extract IOCs from Registry"""
+        reg_file = "/home/ubuntu/kansa-lab/sample-data/registry/autorun-entries.csv"
+        if not os.path.exists(reg_file):
+            return
+        df = pd.read_csv(reg_file)
+
+        for _, row in df.iterrows():
+            value_lower = row['Value'].lower()
+            if any(path in value_lower for path in ['temp', 'tmp', 'malware']):
+                self.add_ioc('suspicious_autorun', row['Value'], 'Registry Autorun',
+                             row['ComputerName'], severity='High')
+
+    def analyze_processes(self):
+        """Extract IOCs from Process data"""
+        proc_file = "/home/ubuntu/kansa-lab/sample-data/processes/running-processes.csv"
+        if not os.path.exists(proc_file):
+            return
+        df = pd.read_csv(proc_file)
+
+        for _, row in df.iterrows():
+            cmdline_lower = str(row['CommandLine']).lower()
+            if 'powershell' in row['ProcessName'].lower() and 'bypass' in cmdline_lower:
+                self.add_ioc('suspicious_powershell', row['CommandLine'], 'Process List',
+                             row['ComputerName'], row['CreationDate'], 'High')
+
+    def generate_correlation_report(self):
+        """Generate comprehensive IOC correlation report"""
+        print(f"\n=== IOC CORRELATION REPORT ===")
+        print(f"Total IOCs Identified: {len(self.iocs)}")
+
+        computers = {}
+        for ioc in self.iocs:
+            computers.setdefault(ioc['computer'], []).append(ioc)
+
+        print(f"Affected Computers: {len(computers)}")
+
+        severity_counts = {}
+        for ioc in self.iocs:
+            severity_counts[ioc['severity']] = severity_counts.get(ioc['severity'], 0) + 1
+
+        print("\nSeverity Breakdown:")
+        for severity, count in severity_counts.items():
+            print(f"  {severity}: {count}")
+
+        print("\n=== PER-COMPUTER ANALYSIS ===")
+        for computer, iocs in computers.items():
+            print(f"\n🖥️  {computer} ({len(iocs)} IOCs)")
+            high_severity = [ioc for ioc in iocs if ioc['severity'] == 'High']
+            if high_severity:
+                print(f"  ⚠️  HIGH PRIORITY: {len(high_severity)} critical IOCs")
+            for ioc in iocs:
+                icon = "🚨" if ioc['severity'] == 'High' else "⚠️" if ioc['severity'] == 'Medium' else "ℹ️"
+                print(f"    {icon} {ioc['type']}: {ioc['value'][:50]}...")
+
+        print(f"\n=== TIMELINE ANALYSIS ===")
+        sorted_timeline = sorted(self.timeline, key=lambda x: x['timestamp'])
+        print("Chronological IOC sequence:")
+        for ioc in sorted_timeline:
+            print(f"  {ioc['timestamp'][:19]} | {ioc['computer']} | {ioc['type']} | {ioc['severity']}")
+
+        report_file = "/home/ubuntu/kansa-lab/results/ioc_correlation_report.json"
+        os.makedirs(os.path.dirname(report_file), exist_ok=True)
+        with open(report_file, 'w') as f:
+            json.dump({
+                'summary': {
+                    'total_iocs': len(self.iocs),
+                    'affected_computers': len(computers),
+                    'severity_breakdown': severity_counts
+                },
+                'iocs': self.iocs,
+                'timeline': sorted_timeline
+            }, f, indent=2)
+
+        print(f"\n📄 Detailed report saved to: {report_file}")
+
+if __name__ == "__main__":
+    correlator = IOCCorrelator()
+    correlator.analyze_all_artifacts()
+
+# TODO: Add scoring weight logic for compound IOC chains
+```
+
+### 🎬 Subtask 3.2: Create Master Analysis Script
+
+```bash
+#!/bin/bash
+# 🎛️ run_full_analysis.sh — Master Orchestrator
+
+echo "=========================================="
+echo "    Kansa Windows Artifact Analysis"
+echo "=========================================="
+echo
+
+mkdir -p ~/kansa-lab/results
+
+echo "1. 📜 Analyzing Event Logs..."
+python3 ~/kansa-lab/analyze_eventlogs.py > ~/kansa-lab/results/eventlog_analysis.txt
+
+echo "2. 🗝️ Analyzing Registry Artifacts..."
+python3 ~/kansa-lab/analyze_registry.py > ~/kansa-lab/results/registry_analysis.txt
+
+echo "3. ⚙️ Analyzing Process Data..."
+python3 ~/kansa-lab/analyze_processes.py > ~/kansa-lab/results/process_analysis.txt
+
+echo "4. 🔗 Correlating IOCs..."
+python3 ~/kansa-lab/correlate_iocs.py > ~/kansa-lab/results/ioc_correlation.txt
+
+echo "=========================================="
+echo "✅ Analysis Complete!"
+echo "=========================================="
+ls -la ~/kansa-lab/results/
+
+# TODO: Add email/Slack notification hook on completion
+```
+
+### ▶️ Subtask 3.3: Execute Full Analysis
+
+```bash
+# 🚦 Run the complete analysis
+cd ~/kansa-lab
+./run_full_analysis.sh
+
+# 📋 View the correlation results
+cat ~/kansa-lab/results/ioc_correlation.txt
+
+# 📦 View the detailed JSON report
+python3 -m json.tool ~/kansa-lab/results/ioc_correlation_report.json
+```
+
+### 📤 Subtask 3.4: Create IOC Export for SIEM Integration
+
+```python
+#!/usr/bin/env python3
+# 📮 export_iocs.py — SIEM & YARA Exporter
+import json
+import csv
+import os
+
+def export_iocs_to_formats():
+    """Export IOCs to various formats for SIEM integration"""
+
+    report_file = "/home/ubuntu/kansa-lab/results/ioc_correlation_report.json"
+    if not os.path.exists(report_file):
+        print("No correlation report found. Run the analysis first.")
+        return
+
+    with open(report_file, 'r') as f:
+        report = json.load(f)
+
+    iocs = report['iocs']
+
+    # 📊 Export to CSV for Splunk/ELK
+    csv_file = "/home/ubuntu/kansa-lab/results/iocs_for_siem.csv"
+    with open(csv_file, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=['timestamp', 'computer', 'type', 'value', 'severity', 'source'])
+        writer.writeheader()
+        writer.writerows(iocs)
+    print(f"IOCs exported to CSV: {csv_file}")
+
+    # 🚨 Export high-severity IOCs only
+    high_severity_iocs = [ioc for ioc in iocs if ioc['severity'] == 'High']
+    high_sev_file = "/home/ubuntu/kansa-lab/results/high_priority_iocs.json"
+    with open(high_sev_file, 'w') as f:
+        json.dump(high_severity_iocs, f, indent=2)
+    print(f"High-priority IOCs exported: {high_sev_file}")
+
+    # 🧬 Create YARA-style rules for detected patterns
+    yara_file = "/home/ubuntu/kansa-lab/results/detected_patterns.yar"
+    with open(yara_file, 'w') as f:
+        f.write('rule Suspicious_PowerShell_Bypass {\n')
+        f.write('    meta:\n')
+        f.write('        description = "Detects PowerShell execution policy bypass"\n')
+        f.write('        severity = "High"\n')
+        f.write('    strings:\n')
+        f.write('        $bypass = "ExecutionPolicy Bypass" nocase\n')
+        f.write('        $powershell = "powershell.exe" nocase\n')
+        f.write('    condition:\n')
+        f.write('        $bypass and $powershell\n')
+        f.write('}\n\n')
+
+        f.write('rule Suspicious_Temp_Autorun {\n')
+        f.write('    meta:\n')
+        f.write('        description = "Detects autorun entries in temp directories"\n')
+        f.write('        severity = "High"\n')
+        f.write('    strings:\n')
+        f.write('        $temp1 = "\\\\temp\\\\" nocase\n')
+        f.write('        $temp2 = "\\\\tmp\\\\" nocase\n')
+        f.write('        $exe = ".exe" nocase\n')
+        f.write('    condition:\n')
+        f.write('        ($temp1 or $temp2) and $exe\n')
+        f.write('}\n')
+
+    print(f"YARA rules generated: {yara_file}")
+
+if __name__ == "__main__":
+    export_iocs_to_formats()
+
+# TODO: Add STIX/TAXII export format for threat-intel sharing platforms
+```
+
+---
+
+## ✅ Verification and Testing
+
+```bash
+# 🔍 Check all generated files
+find ~/kansa-lab/results -type f -exec ls -lh {} \;
+
+# 📊 Display summary statistics
+echo "Event Log Analysis:"
+grep -c "ALERT" ~/kansa-lab/results/eventlog_analysis.txt
+
+echo "Registry Analysis:"
+grep -c "SUSPICIOUS ENTRY" ~/kansa-lab/results/registry_analysis.txt
+
+echo "Process Analysis:"
+grep -c "SUSPICIOUS PROCESS" ~/kansa-lab/results/process_analysis.txt
+
+echo "Total IOCs Identified:"
+grep "Total IOCs Identified" ~/kansa-lab/results/ioc_correlation.txt
+
+# TODO: Add automated pass/fail thresholds for CI-based lab grading
+```
+
+**✔️ Expected Result:** All four result files are generated under `~/kansa-lab/results/`, the correlation report lists IOCs grouped by severity, and the executive summary (below) is produced without errors.
+
+```bash
+python3 ~/kansa-lab/generate_final_report.py
+```
+
+---
+
+## 🗺️ MITRE ATT&CK Mapping
+
+| Technique ID | Technique Name | Tactic | Lab Artifact |
+|---|---|---|---|
+| T1078 | Valid Accounts | Defense Evasion / Persistence | Event ID 4624/4625 logon analysis |
+| T1110 | Brute Force | Credential Access | Repeated Event ID 4625 failed logons |
+| T1550.002 | Use Alternate Authentication Material: Pass the Hash | Lateral Movement | Event ID 4648 explicit credential use |
+| T1547.001 | Boot or Logon Autostart Execution: Registry Run Keys | Persistence | Registry `Run` key autorun entries |
+| T1059.001 | Command and Scripting Interpreter: PowerShell | Execution | `-ExecutionPolicy Bypass` process detections |
+| T1027 | Obfuscated Files or Information | Defense Evasion | Encoded/hidden PowerShell command-line flags |
+
+---
+
+## 🧩 Troubleshooting
+
+<details>
+<summary>❗ Kansa repository clone fails</summary>
+
+- Verify outbound internet access from the lab VM
+- Confirm `git` is installed: `git --version`
+- Retry with `sudo git clone https://github.com/davehull/Kansa.git`
+
+</details>
+
+<details>
+<summary>❗ Python scripts fail with ModuleNotFoundError</summary>
+
+- Re-run `pip3 install pandas numpy matplotlib seaborn`
+- Confirm the correct Python interpreter is used: `python3 --version`
+- If using a virtual environment, ensure it is activated before running scripts
+
+</details>
+
+<details>
+<summary>❗ CSV file not found errors</summary>
+
+- Confirm sample data was generated in Subtask 1.3
+- Check paths match exactly: `~/kansa-lab/sample-data/...`
+- Re-run the `cat > ... << 'EOF'` blocks if files are missing
+
+</details>
+
+<details>
+<summary>❗ Correlation report shows zero IOCs</summary>
+
+- Confirm the sample CSVs contain the expected Event IDs (4625, 4648) and suspicious registry/process entries
+- Ensure `correlate_iocs.py` is run **after** the sample data creation step
+- Check `~/kansa-lab/results/ioc_correlation_report.json` was actually created
+
+</details>
+
+<details>
+<summary>❗ Permission denied when running .sh scripts</summary>
+
+- Run `chmod +x ~/kansa-lab/run_full_analysis.sh`
+- Execute using `./run_full_analysis.sh` from within `~/kansa-lab`
+
+</details>
+
+---
+
+## 🏁 Conclusion
+
+You have successfully completed a comprehensive Windows artifact analysis using Kansa framework principles. This lab demonstrated:
+
+**🎯 Key Accomplishments**
+- 🏢 **Enterprise-Scale Analysis** — Simulated large-scale Windows artifact collection and analysis
+- 🔗 **Multi-Source Correlation** — Combined Event Logs, Registry, and Process data for comprehensive threat detection
+- 🚨 **IOC Identification** — Automated detection of suspicious activities and potential security incidents
+- 📡 **SIEM Integration** — Generated exportable formats for security information and event management systems
+
+**🌍 Real-World Applications**
+- 🧯 **Incident Response** — Rapid analysis of compromised systems across enterprise networks
+- 🕵️ **Threat Hunting** — Proactive identification of advanced persistent threats
+- 📋 **Compliance Monitoring** — Automated security posture assessment and reporting
+- ⚖️ **Forensic Analysis** — Detailed artifact examination for legal and investigative purposes
+
+---
+
+<div align="center">
+
+### 🏢 Al Nafi Cloud Security Training Platform
+
+**Blue Team / Threat Intelligence & Digital Forensics Track**
+
+![Al Nafi](https://img.shields.io/badge/Al_Nafi-Cybersecurity_Training-1E90FF?style=for-the-badge)
+
+</div>
