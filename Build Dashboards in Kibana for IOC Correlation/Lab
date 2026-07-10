@@ -1,0 +1,414 @@
+Build Dashboards in Kibana for IOC Correlation
+Learning Objectives
+By completing this lab, you will:
+
+Install and configure the ELK stack (Elasticsearch, Logstash, Kibana) on a single Linux machine
+Create custom Kibana dashboards for IOC (Indicators of Compromise) visualization
+Configure queries to correlate security events and IOCs
+Build real-time monitoring visualizations for threat detection
+Prerequisites
+Basic Linux command-line knowledge
+Understanding of log analysis concepts
+Familiarity with JSON data format
+Basic cybersecurity concepts (IOCs, threat indicators)
+Lab Environment
+Al Nafi provides Linux-based cloud machines for this lab. Simply click Start Lab to access your dedicated environment. The provided Linux machine is bare metal with no pre-installed tools, so you will install all required components during the lab.
+
+Task 1: Install and Configure ELK Stack
+Subtask 1.1: Install Java and System Dependencies
+# Update system packages
+sudo apt update && sudo apt upgrade -y
+
+# Install Java 11 (required for Elasticsearch)
+sudo apt install openjdk-11-jdk curl wget gnupg2 -y
+
+# Verify Java installation
+java -version
+Subtask 1.2: Install Elasticsearch
+# Add Elasticsearch repository
+wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | sudo tee /etc/apt/sources.list.d/elastic-7.x.list
+
+# Install Elasticsearch
+sudo apt update
+sudo apt install elasticsearch -y
+
+# Configure Elasticsearch
+sudo nano /etc/elasticsearch/elasticsearch.yml
+Add these configurations to the file:
+
+network.host: localhost
+http.port: 9200
+discovery.type: single-node
+# Start and enable Elasticsearch
+sudo systemctl start elasticsearch
+sudo systemctl enable elasticsearch
+
+# Verify Elasticsearch is running
+curl -X GET "localhost:9200/"
+Subtask 1.3: Install Kibana
+# Install Kibana
+sudo apt install kibana -y
+
+# Configure Kibana
+sudo nano /etc/kibana/kibana.yml
+Add these configurations:
+
+server.port: 5601
+server.host: "0.0.0.0"
+elasticsearch.hosts: ["http://localhost:9200"]
+# Start and enable Kibana
+sudo systemctl start kibana
+sudo systemctl enable kibana
+
+# Wait for Kibana to start (takes 2-3 minutes)
+sleep 180
+Subtask 1.4: Install Logstash
+# Install Logstash
+sudo apt install logstash -y
+
+# Start and enable Logstash
+sudo systemctl start logstash
+sudo systemctl enable logstash
+Task 2: Create Sample IOC Data
+Subtask 2.1: Generate IOC Sample Data
+# Create directory for sample data
+mkdir ~/ioc-data
+cd ~/ioc-data
+
+# Create sample IOC data file
+cat > ioc_events.json << 'EOF'
+{"timestamp":"2024-01-15T10:30:00Z","event_type":"malware_detection","ioc_type":"hash","ioc_value":"d41d8cd98f00b204e9800998ecf8427e","severity":"high","source_ip":"192.168.1.100","destination_ip":"10.0.0.50","action":"blocked"}
+{"timestamp":"2024-01-15T10:35:00Z","event_type":"suspicious_domain","ioc_type":"domain","ioc_value":"malicious-site.com","severity":"medium","source_ip":"192.168.1.101","destination_ip":"8.8.8.8","action":"monitored"}
+{"timestamp":"2024-01-15T10:40:00Z","event_type":"ip_reputation","ioc_type":"ip","ioc_value":"203.0.113.5","severity":"high","source_ip":"192.168.1.102","destination_ip":"203.0.113.5","action":"blocked"}
+{"timestamp":"2024-01-15T10:45:00Z","event_type":"file_hash","ioc_type":"hash","ioc_value":"5d41402abc4b2a76b9719d911017c592","severity":"critical","source_ip":"192.168.1.103","destination_ip":"10.0.0.51","action":"quarantined"}
+{"timestamp":"2024-01-15T10:50:00Z","event_type":"url_analysis","ioc_type":"url","ioc_value":"http://suspicious-url.net/payload","severity":"medium","source_ip":"192.168.1.104","destination_ip":"198.51.100.10","action":"monitored"}
+{"timestamp":"2024-01-15T11:00:00Z","event_type":"malware_detection","ioc_type":"hash","ioc_value":"098f6bcd4621d373cade4e832627b4f6","severity":"high","source_ip":"192.168.1.105","destination_ip":"10.0.0.52","action":"blocked"}
+{"timestamp":"2024-01-15T11:05:00Z","event_type":"suspicious_domain","ioc_type":"domain","ioc_value":"phishing-example.org","severity":"critical","source_ip":"192.168.1.106","destination_ip":"8.8.4.4","action":"blocked"}
+{"timestamp":"2024-01-15T11:10:00Z","event_type":"ip_reputation","ioc_type":"ip","ioc_value":"198.51.100.25","severity":"medium","source_ip":"192.168.1.107","destination_ip":"198.51.100.25","action":"monitored"}
+EOF
+Subtask 2.2: Configure Logstash Pipeline
+# Create Logstash configuration
+sudo nano /etc/logstash/conf.d/ioc-pipeline.conf
+Add this configuration:
+
+input {
+  file {
+    path => "/home/*/ioc-data/ioc_events.json"
+    start_position => "beginning"
+    sincedb_path => "/dev/null"
+    codec => "json"
+  }
+}
+
+filter {
+  date {
+    match => [ "timestamp", "ISO8601" ]
+  }
+  
+  mutate {
+    add_field => { "correlation_id" => "%{ioc_type}_%{ioc_value}" }
+  }
+}
+
+output {
+  elasticsearch {
+    hosts => ["localhost:9200"]
+    index => "ioc-events-%{+YYYY.MM.dd}"
+  }
+}
+# Restart Logstash to apply configuration
+sudo systemctl restart logstash
+
+# Wait for data ingestion
+sleep 60
+Task 3: Create Custom Kibana Dashboards
+Subtask 3.1: Access Kibana and Create Index Pattern
+# Check if Kibana is accessible
+curl -I http://localhost:5601
+
+echo "Access Kibana at: http://localhost:5601"
+echo "Creating index pattern via API..."
+
+# Create index pattern via API
+curl -X POST "localhost:5601/api/saved_objects/index-pattern/ioc-events-*" \
+  -H "Content-Type: application/json" \
+  -H "kbn-xsrf: true" \
+  -d '{
+    "attributes": {
+      "title": "ioc-events-*",
+      "timeFieldName": "timestamp"
+    }
+  }'
+Subtask 3.2: Create IOC Correlation Visualizations
+# Create IOC Type Distribution visualization
+curl -X POST "localhost:5601/api/saved_objects/visualization" \
+  -H "Content-Type: application/json" \
+  -H "kbn-xsrf: true" \
+  -d '{
+    "attributes": {
+      "title": "IOC Type Distribution",
+      "visState": "{\"title\":\"IOC Type Distribution\",\"type\":\"pie\",\"params\":{\"addTooltip\":true,\"addLegend\":true,\"legendPosition\":\"right\"},\"aggs\":[{\"id\":\"1\",\"enabled\":true,\"type\":\"count\",\"schema\":\"metric\",\"params\":{}},{\"id\":\"2\",\"enabled\":true,\"type\":\"terms\",\"schema\":\"segment\",\"params\":{\"field\":\"ioc_type.keyword\",\"size\":10,\"order\":\"desc\",\"orderBy\":\"1\"}}]}",
+      "uiStateJSON": "{}",
+      "description": "",
+      "version": 1,
+      "kibanaSavedObjectMeta": {
+        "searchSourceJSON": "{\"index\":\"ioc-events-*\",\"query\":{\"match_all\":{}},\"filter\":[]}"
+      }
+    }
+  }'
+
+# Create Severity Timeline visualization
+curl -X POST "localhost:5601/api/saved_objects/visualization" \
+  -H "Content-Type: application/json" \
+  -H "kbn-xsrf: true" \
+  -d '{
+    "attributes": {
+      "title": "IOC Severity Timeline",
+      "visState": "{\"title\":\"IOC Severity Timeline\",\"type\":\"histogram\",\"params\":{\"grid\":{\"categoryLines\":false,\"style\":{\"color\":\"#eee\"}},\"categoryAxes\":[{\"id\":\"CategoryAxis-1\",\"type\":\"category\",\"position\":\"bottom\",\"show\":true,\"style\":{},\"scale\":{\"type\":\"linear\"},\"labels\":{\"show\":true,\"truncate\":100},\"title\":{}}],\"valueAxes\":[{\"id\":\"ValueAxis-1\",\"name\":\"LeftAxis-1\",\"type\":\"value\",\"position\":\"left\",\"show\":true,\"style\":{},\"scale\":{\"type\":\"linear\",\"mode\":\"normal\"},\"labels\":{\"show\":true,\"rotate\":0,\"filter\":false,\"truncate\":100},\"title\":{\"text\":\"Count\"}}],\"seriesParams\":[{\"show\":\"true\",\"type\":\"histogram\",\"mode\":\"stacked\",\"data\":{\"label\":\"Count\",\"id\":\"1\"},\"valueAxis\":\"ValueAxis-1\",\"drawLinesBetweenPoints\":true,\"showCircles\":true}],\"addTooltip\":true,\"addLegend\":true,\"legendPosition\":\"right\",\"times\":[],\"addTimeMarker\":false},\"aggs\":[{\"id\":\"1\",\"enabled\":true,\"type\":\"count\",\"schema\":\"metric\",\"params\":{}},{\"id\":\"2\",\"enabled\":true,\"type\":\"date_histogram\",\"schema\":\"segment\",\"params\":{\"field\":\"timestamp\",\"interval\":\"auto\",\"customInterval\":\"2h\",\"min_doc_count\":1,\"extended_bounds\":{}}},{\"id\":\"3\",\"enabled\":true,\"type\":\"terms\",\"schema\":\"group\",\"params\":{\"field\":\"severity.keyword\",\"size\":5,\"order\":\"desc\",\"orderBy\":\"1\"}}]}",
+      "uiStateJSON": "{}",
+      "description": "",
+      "version": 1,
+      "kibanaSavedObjectMeta": {
+        "searchSourceJSON": "{\"index\":\"ioc-events-*\",\"query\":{\"match_all\":{}},\"filter\":[]}"
+      }
+    }
+  }'
+Subtask 3.3: Create IOC Correlation Dashboard
+# Create the main IOC Correlation Dashboard
+curl -X POST "localhost:5601/api/saved_objects/dashboard" \
+  -H "Content-Type: application/json" \
+  -H "kbn-xsrf: true" \
+  -d '{
+    "attributes": {
+      "title": "IOC Correlation Dashboard",
+      "hits": 0,
+      "description": "Dashboard for correlating and visualizing Indicators of Compromise",
+      "panelsJSON": "[{\"gridData\":{\"x\":0,\"y\":0,\"w\":24,\"h\":15,\"i\":\"1\"},\"panelIndex\":\"1\",\"version\":\"7.17.0\",\"panelRefName\":\"panel_1\"},{\"gridData\":{\"x\":24,\"y\":0,\"w\":24,\"h\":15,\"i\":\"2\"},\"panelIndex\":\"2\",\"version\":\"7.17.0\",\"panelRefName\":\"panel_2\"}]",
+      "optionsJSON": "{\"useMargins\":true,\"syncColors\":false,\"hidePanelTitles\":false}",
+      "version": 1,
+      "timeRestore": false,
+      "kibanaSavedObjectMeta": {
+        "searchSourceJSON": "{\"query\":{\"query\":\"\",\"language\":\"kuery\"},\"filter\":[]}"
+      }
+    },
+    "references": [
+      {
+        "name": "panel_1",
+        "type": "visualization",
+        "id": "ioc-type-distribution"
+      },
+      {
+        "name": "panel_2", 
+        "type": "visualization",
+        "id": "ioc-severity-timeline"
+      }
+    ]
+  }'
+Task 4: Configure IOC Correlation Queries
+Subtask 4.1: Create Saved Searches for IOC Correlation
+# Create High Severity IOCs search
+curl -X POST "localhost:5601/api/saved_objects/search" \
+  -H "Content-Type: application/json" \
+  -H "kbn-xsrf: true" \
+  -d '{
+    "attributes": {
+      "title": "High Severity IOCs",
+      "description": "Search for high and critical severity IOCs",
+      "hits": 0,
+      "columns": ["timestamp", "ioc_type", "ioc_value", "severity", "source_ip", "action"],
+      "sort": [["timestamp", "desc"]],
+      "version": 1,
+      "kibanaSavedObjectMeta": {
+        "searchSourceJSON": "{\"index\":\"ioc-events-*\",\"highlightAll\":true,\"version\":true,\"query\":{\"query\":\"severity:(high OR critical)\",\"language\":\"kuery\"},\"filter\":[]}"
+      }
+    }
+  }'
+
+# Create IOC Correlation by Source IP search
+curl -X POST "localhost:5601/api/saved_objects/search" \
+  -H "Content-Type: application/json" \
+  -H "kbn-xsrf: true" \
+  -d '{
+    "attributes": {
+      "title": "IOC Correlation by Source IP",
+      "description": "Correlate IOCs by source IP address",
+      "hits": 0,
+      "columns": ["timestamp", "source_ip", "ioc_type", "ioc_value", "event_type", "action"],
+      "sort": [["source_ip.keyword", "asc"], ["timestamp", "desc"]],
+      "version": 1,
+      "kibanaSavedObjectMeta": {
+        "searchSourceJSON": "{\"index\":\"ioc-events-*\",\"highlightAll\":true,\"version\":true,\"query\":{\"match_all\":{}},\"filter\":[]}"
+      }
+    }
+  }'
+Subtask 4.2: Create Advanced Correlation Visualizations
+# Create Source IP vs IOC Type heatmap
+curl -X POST "localhost:5601/api/saved_objects/visualization" \
+  -H "Content-Type: application/json" \
+  -H "kbn-xsrf: true" \
+  -d '{
+    "attributes": {
+      "title": "Source IP vs IOC Type Correlation",
+      "visState": "{\"title\":\"Source IP vs IOC Type Correlation\",\"type\":\"heatmap\",\"params\":{\"addTooltip\":true,\"addLegend\":true,\"enableHover\":false,\"legendPosition\":\"right\",\"times\":[],\"colorsNumber\":4,\"colorSchema\":\"Yellow to Red\",\"setColorRange\":false,\"colorsRange\":[],\"invertColors\":false,\"percentageMode\":false,\"valueAxes\":[{\"show\":false,\"id\":\"ValueAxis-1\",\"type\":\"value\",\"scale\":{\"type\":\"linear\",\"defaultYExtents\":false},\"labels\":{\"show\":false,\"rotate\":0,\"color\":\"#555\"}}]},\"aggs\":[{\"id\":\"1\",\"enabled\":true,\"type\":\"count\",\"schema\":\"metric\",\"params\":{}},{\"id\":\"2\",\"enabled\":true,\"type\":\"terms\",\"schema\":\"segment\",\"params\":{\"field\":\"source_ip.keyword\",\"size\":10,\"order\":\"desc\",\"orderBy\":\"1\"}},{\"id\":\"3\",\"enabled\":true,\"type\":\"terms\",\"schema\":\"group\",\"params\":{\"field\":\"ioc_type.keyword\",\"size\":5,\"order\":\"desc\",\"orderBy\":\"1\"}}]}",
+      "uiStateJSON": "{\"vis\":{\"defaultColors\":{\"0 - 1\":\"rgb(255,245,240)\",\"1 - 2\":\"rgb(254,224,210)\",\"2 - 3\":\"rgb(252,187,161)\",\"3 - 4\":\"rgb(252,146,114)\"}}}",
+      "description": "",
+      "version": 1,
+      "kibanaSavedObjectMeta": {
+        "searchSourceJSON": "{\"index\":\"ioc-events-*\",\"query\":{\"match_all\":{}},\"filter\":[]}"
+      }
+    }
+  }'
+
+# Create Action Response Distribution
+curl -X POST "localhost:5601/api/saved_objects/visualization" \
+  -H "Content-Type: application/json" \
+  -H "kbn-xsrf: true" \
+  -d '{
+    "attributes": {
+      "title": "IOC Response Actions",
+      "visState": "{\"title\":\"IOC Response Actions\",\"type\":\"pie\",\"params\":{\"addTooltip\":true,\"addLegend\":true,\"legendPosition\":\"right\",\"isDonut\":true},\"aggs\":[{\"id\":\"1\",\"enabled\":true,\"type\":\"count\",\"schema\":\"metric\",\"params\":{}},{\"id\":\"2\",\"enabled\":true,\"type\":\"terms\",\"schema\":\"segment\",\"params\":{\"field\":\"action.keyword\",\"size\":10,\"order\":\"desc\",\"orderBy\":\"1\"}}]}",
+      "uiStateJSON": "{}",
+      "description": "",
+      "version": 1,
+      "kibanaSavedObjectMeta": {
+        "searchSourceJSON": "{\"index\":\"ioc-events-*\",\"query\":{\"match_all\":{}},\"filter\":[]}"
+      }
+    }
+  }'
+Task 5: Real-time Monitoring Setup
+Subtask 5.1: Configure Auto-refresh and Alerts
+# Create a script to continuously add new IOC data
+cat > ~/ioc-data/generate_realtime_data.sh << 'EOF'
+#!/bin/bash
+
+while true; do
+    TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    IOC_TYPES=("hash" "ip" "domain" "url")
+    SEVERITIES=("low" "medium" "high" "critical")
+    ACTIONS=("blocked" "monitored" "quarantined" "allowed")
+    
+    IOC_TYPE=${IOC_TYPES[$RANDOM % ${#IOC_TYPES[@]}]}
+    SEVERITY=${SEVERITIES[$RANDOM % ${#SEVERITIES[@]}]}
+    ACTION=${ACTIONS[$RANDOM % ${#ACTIONS[@]}]}
+    SOURCE_IP="192.168.1.$((RANDOM % 254 + 1))"
+    DEST_IP="10.0.0.$((RANDOM % 254 + 1))"
+    
+    case $IOC_TYPE in
+        "hash")
+            IOC_VALUE=$(echo -n "sample_file_$RANDOM" | md5sum | cut -d' ' -f1)
+            EVENT_TYPE="malware_detection"
+            ;;
+        "ip")
+            IOC_VALUE="203.0.113.$((RANDOM % 254 + 1))"
+            EVENT_TYPE="ip_reputation"
+            ;;
+        "domain")
+            IOC_VALUE="suspicious-domain-$RANDOM.com"
+            EVENT_TYPE="suspicious_domain"
+            ;;
+        "url")
+            IOC_VALUE="http://malicious-site-$RANDOM.net/payload"
+            EVENT_TYPE="url_analysis"
+            ;;
+    esac
+    
+    echo "{\"timestamp\":\"$TIMESTAMP\",\"event_type\":\"$EVENT_TYPE\",\"ioc_type\":\"$IOC_TYPE\",\"ioc_value\":\"$IOC_VALUE\",\"severity\":\"$SEVERITY\",\"source_ip\":\"$SOURCE_IP\",\"destination_ip\":\"$DEST_IP\",\"action\":\"$ACTION\"}" >> ~/ioc-data/realtime_ioc_events.json
+    
+    sleep 30
+done
+EOF
+
+chmod +x ~/ioc-data/generate_realtime_data.sh
+Subtask 5.2: Configure Real-time Data Pipeline
+# Create additional Logstash configuration for real-time data
+sudo nano /etc/logstash/conf.d/realtime-ioc-pipeline.conf
+Add this configuration:
+
+input {
+  file {
+    path => "/home/*/ioc-data/realtime_ioc_events.json"
+    start_position => "end"
+    codec => "json"
+  }
+}
+
+filter {
+  date {
+    match => [ "timestamp", "ISO8601" ]
+  }
+  
+  mutate {
+    add_field => { 
+      "correlation_id" => "%{ioc_type}_%{ioc_value}"
+      "data_source" => "realtime"
+    }
+  }
+}
+
+output {
+  elasticsearch {
+    hosts => ["localhost:9200"]
+    index => "ioc-events-%{+YYYY.MM.dd}"
+  }
+}
+# Restart Logstash
+sudo systemctl restart logstash
+
+# Start real-time data generation in background
+nohup ~/ioc-data/generate_realtime_data.sh > /dev/null 2>&1 &
+
+echo "Real-time IOC data generation started"
+echo "Data will be continuously added to your dashboard"
+Task 6: Verify Dashboard Functionality
+Subtask 6.1: Test Dashboard Access and Functionality
+# Verify Elasticsearch has data
+curl -X GET "localhost:9200/ioc-events-*/_search?size=5&pretty"
+
+# Check Kibana dashboard access
+echo "=== Lab Verification ==="
+echo "1. Kibana URL: http://localhost:5601"
+echo "2. Navigate to Dashboard section"
+echo "3. Open 'IOC Correlation Dashboard'"
+echo "4. Verify visualizations are displaying data"
+echo "5. Test time range filters and auto-refresh"
+
+# Display service status
+echo "=== Service Status ==="
+sudo systemctl status elasticsearch --no-pager -l
+sudo systemctl status kibana --no-pager -l
+sudo systemctl status logstash --no-pager -l
+Subtask 6.2: Create Sample Correlation Queries
+# Create a script with sample correlation queries
+cat > ~/correlation_queries.txt << 'EOF'
+Sample Kibana Query Language (KQL) queries for IOC correlation:
+
+1. High severity events from specific IP:
+   source_ip:"192.168.1.100" AND severity:(high OR critical)
+
+2. Multiple IOC types from same source:
+   source_ip:"192.168.1.101" AND ioc_type:(hash OR domain)
+
+3. Blocked actions in last hour:
+   action:"blocked" AND timestamp:[now-1h TO now]
+
+4. Correlation by IOC value:
+   ioc_value:"d41d8cd98f00b204e9800998ecf8427e"
+
+5. Event type correlation:
+   event_type:"malware_detection" AND severity:"critical"
+EOF
+
+echo "Sample correlation queries saved to ~/correlation_queries.txt"
+cat ~/correlation_queries.txt
+Conclusion
+You have successfully completed Lab 9: Build Dashboards in Kibana for IOC Correlation. In this lab, you:
+
+Installed and configured a complete ELK stack on a single Linux machine
+Created custom Kibana dashboards with multiple visualizations for IOC analysis
+Configured correlation queries to identify relationships between security events
+Set up real-time monitoring with continuous data ingestion and visualization
+Built practical IOC correlation capabilities including severity analysis, source IP tracking, and response action monitoring
+This lab demonstrates essential skills for security analysts and SOC operators who need to visualize and correlate threat intelligence data. The dashboard you created provides real-time visibility into IOCs, enabling faster threat detection and response. These skills are directly applicable to enterprise security monitoring, incident response, and threat hunting activities.
+
+The correlation techniques and visualization methods you learned can be extended to handle larger datasets and more complex IOC relationships in production environments.
