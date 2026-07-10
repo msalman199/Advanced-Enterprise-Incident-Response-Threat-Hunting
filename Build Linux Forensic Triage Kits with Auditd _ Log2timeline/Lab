@@ -1,0 +1,226 @@
+Build Linux Forensic Triage Kits with Auditd + Log2timeline
+Learning Objectives
+By completing this lab, you will:
+
+Configure Auditd for comprehensive Linux system logging and monitoring
+Install and use Log2timeline (Plaso) to create forensic timelines from system artifacts
+Analyze generated timelines to identify potential security incidents and attack patterns
+Build a complete forensic triage workflow for rapid incident response
+Prerequisites
+Basic Linux command-line knowledge
+Understanding of file systems and log structures
+Familiarity with system administration concepts
+Knowledge of common attack vectors and indicators of compromise
+Lab Environment
+Al Nafi provides a Linux-based cloud machine for this lab. Simply click Start Lab to access your dedicated environment. The provided Linux machine is bare metal with no pre-installed forensic tools, so you will install all required tools during the lab exercises.
+
+Task 1: Set up Auditd for Linux Logging
+Subtask 1.1: Install and Configure Auditd
+Install the audit daemon and related tools:
+
+sudo apt update
+sudo apt install -y auditd audispd-plugins
+Start and enable the audit service:
+
+sudo systemctl start auditd
+sudo systemctl enable auditd
+Subtask 1.2: Configure Audit Rules
+Create comprehensive audit rules for forensic monitoring:
+
+sudo nano /etc/audit/rules.d/forensic.rules
+Add the following rules:
+
+# Delete existing rules
+-D
+
+# Buffer size
+-b 8192
+
+# Failure mode (0=silent, 1=printk, 2=panic)
+-f 1
+
+# Monitor file access and modifications
+-w /etc/passwd -p wa -k identity
+-w /etc/group -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/sudoers -p wa -k identity
+
+# Monitor system calls
+-a always,exit -F arch=b64 -S execve -k exec
+-a always,exit -F arch=b32 -S execve -k exec
+
+# Monitor network connections
+-a always,exit -F arch=b64 -S socket -k network
+-a always,exit -F arch=b32 -S socket -k network
+
+# Monitor file deletions
+-a always,exit -F arch=b64 -S unlink -S unlinkat -S rename -S renameat -k delete
+-a always,exit -F arch=b32 -S unlink -S unlinkat -S rename -S renameat -k delete
+
+# Monitor privilege escalation
+-w /bin/su -p x -k priv_esc
+-w /usr/bin/sudo -p x -k priv_esc
+-w /etc/sudoers -p rw -k priv_esc
+
+# Monitor login/logout events
+-w /var/log/lastlog -p wa -k logins
+-w /var/run/faillock -p wa -k logins
+
+# Lock configuration
+-e 2
+Subtask 1.3: Apply Rules and Generate Test Data
+Restart auditd to apply new rules:
+
+sudo service auditd restart
+Generate some audit events for testing:
+
+# Create test files
+echo "test data" > /tmp/test_file.txt
+cat /etc/passwd > /dev/null
+sudo ls /root
+rm /tmp/test_file.txt
+
+# Check audit logs
+sudo ausearch -k exec | head -10
+Task 2: Use Log2timeline to Build Forensic Timelines
+Subtask 2.1: Install Log2timeline (Plaso)
+Install Python pip and required dependencies:
+
+sudo apt install -y python3-pip python3-dev python3-setuptools
+sudo apt install -y libbde-dev libewf-dev libqcow-dev libsigscan-dev libsmdev-dev libsmraw-dev libvhdi-dev libvmdk-dev libvshadow-dev
+Install Plaso using pip:
+
+sudo pip3 install plaso
+Verify installation:
+
+log2timeline.py --version
+Subtask 2.2: Create Forensic Timeline
+Create a directory for timeline analysis:
+
+mkdir ~/forensic_analysis
+cd ~/forensic_analysis
+Generate timeline from system artifacts:
+
+# Create timeline from multiple sources
+sudo log2timeline.py --storage-file system_timeline.plaso /var/log/ /home/ /tmp/ /etc/
+This process may take several minutes depending on system size.
+
+Subtask 2.3: Convert Timeline to Readable Format
+Convert the Plaso storage file to CSV format:
+
+psort.py -o l2tcsv -w system_timeline.csv system_timeline.plaso
+Create a filtered timeline focusing on recent events:
+
+psort.py -o l2tcsv -w recent_events.csv system_timeline.plaso "date > '2024-01-01'"
+Task 3: Analyze Timelines to Identify Security Incidents
+Subtask 3.1: Basic Timeline Analysis
+Examine the timeline structure:
+
+head -20 system_timeline.csv
+wc -l system_timeline.csv
+Search for specific indicators of compromise:
+
+# Look for suspicious executables
+grep -i "\.exe\|\.bat\|\.scr" system_timeline.csv
+
+# Search for network-related events
+grep -i "network\|socket\|connection" system_timeline.csv
+
+# Find privilege escalation attempts
+grep -i "sudo\|su\|root" system_timeline.csv
+Subtask 3.2: Advanced Analysis with Audit Logs
+Parse audit logs for specific events:
+
+# Search for execution events
+sudo ausearch -k exec --start today | head -20
+
+# Look for file deletion events
+sudo ausearch -k delete --start today
+
+# Check for privilege escalation
+sudo ausearch -k priv_esc --start today
+Create a combined analysis report:
+
+cat > analysis_report.txt << EOF
+=== Forensic Timeline Analysis Report ===
+Generated: $(date)
+
+Timeline Statistics:
+- Total events: $(wc -l < system_timeline.csv)
+- Recent events: $(wc -l < recent_events.csv)
+
+Key Findings:
+EOF
+
+# Add suspicious activity counts
+echo "- Execution events: $(sudo ausearch -k exec --start today | wc -l)" >> analysis_report.txt
+echo "- File deletions: $(sudo ausearch -k delete --start today | wc -l)" >> analysis_report.txt
+echo "- Privilege escalations: $(sudo ausearch -k priv_esc --start today | wc -l)" >> analysis_report.txt
+Subtask 3.3: Create Incident Response Workflow
+Create a script for automated triage:
+
+cat > forensic_triage.sh << 'EOF'
+#!/bin/bash
+
+echo "=== Linux Forensic Triage Kit ==="
+echo "Starting automated analysis..."
+
+# Create analysis directory
+mkdir -p /tmp/triage_$(date +%Y%m%d_%H%M%S)
+cd /tmp/triage_$(date +%Y%m%d_%H%M%S)
+
+# Collect system information
+echo "Collecting system information..."
+uname -a > system_info.txt
+ps aux > running_processes.txt
+netstat -tulpn > network_connections.txt
+last -n 50 > recent_logins.txt
+
+# Export recent audit events
+echo "Exporting audit events..."
+sudo ausearch --start today > audit_today.txt
+sudo ausearch -k exec --start today > exec_events.txt
+sudo ausearch -k network --start today > network_events.txt
+
+# Create quick timeline
+echo "Creating timeline..."
+sudo log2timeline.py --storage-file quick_timeline.plaso /var/log/auth.log /var/log/syslog 2>/dev/null
+psort.py -o l2tcsv -w quick_timeline.csv quick_timeline.plaso 2>/dev/null
+
+echo "Triage complete. Results in: $(pwd)"
+ls -la
+EOF
+
+chmod +x forensic_triage.sh
+Run the triage script:
+
+./forensic_triage.sh
+Subtask 3.4: Verify Forensic Kit Functionality
+Test the complete forensic workflow:
+
+# Generate test incident
+echo "Creating test incident..."
+sudo useradd testuser
+echo "testuser:password123" | sudo chpasswd
+su - testuser -c "whoami; ls /etc; exit"
+sudo userdel -r testuser
+
+# Run analysis
+echo "Running forensic analysis..."
+sudo ausearch -k identity --start today
+sudo ausearch -k exec --start today | grep testuser
+Display final analysis results:
+
+echo "=== Final Analysis Summary ==="
+cat analysis_report.txt
+echo ""
+echo "=== Audit Statistics ==="
+sudo auditctl -s
+Conclusion
+You have successfully built a comprehensive Linux forensic triage kit combining Auditd for real-time system monitoring and Log2timeline for timeline analysis. This toolkit enables rapid incident response by:
+
+Capturing detailed system activity through audit rules
+Creating comprehensive timelines from multiple data sources
+Providing automated analysis workflows for security incidents
+Establishing a foundation for digital forensics investigations
+These skills are essential for cybersecurity professionals, incident responders, and digital forensics analysts who need to quickly assess and analyze potential security breaches in Linux environments. The combination of proactive logging and timeline analysis provides a powerful approach to understanding system compromise and attack progression.
