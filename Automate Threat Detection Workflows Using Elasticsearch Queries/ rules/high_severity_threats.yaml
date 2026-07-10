@@ -1,0 +1,44 @@
+name: High Severity Threat Detection
+type: frequency
+index: security-logs-*
+num_events: 1
+timeframe:
+  minutes: 5
+
+filter:
+- bool:
+    must:
+    - term:
+        severity: "high"
+    - range:
+        threat_score:
+          gte: 80
+
+alert:
+- "email"
+- "debug"
+
+email:
+- "security@company.com"
+
+alert_text: |
+  High severity threat detected!
+  
+  Event Type: {0}
+  Source IP: {1}
+  Threat Score: {2}
+  Timestamp: {3}
+
+alert_text_args:
+  - event_type
+  - source_ip
+  - threat_score
+  - "@timestamp"
+
+include:
+  - source_ip
+  - destination_ip
+  - event_type
+  - severity
+  - threat_score
+  - action
