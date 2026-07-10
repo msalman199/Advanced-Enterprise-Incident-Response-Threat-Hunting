@@ -1,0 +1,24 @@
+title: Suspicious Ransomware Process Execution
+id: 87654321-4321-4321-4321-210987654321
+status: experimental
+description: Detects execution of processes commonly associated with ransomware
+author: Security Lab
+date: 2024/01/01
+logsource:
+    product: sysmon
+    service: sysmon
+detection:
+    selection:
+        EventID: 1
+        CommandLine|contains:
+            - 'vssadmin delete shadows'
+            - 'wbadmin delete catalog'
+            - 'bcdedit /set'
+            - 'cipher /w'
+    condition: selection
+falsepositives:
+    - System administration activities
+level: high
+tags:
+    - attack.impact
+    - attack.defense_evasion
