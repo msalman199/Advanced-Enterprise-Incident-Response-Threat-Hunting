@@ -1,0 +1,215 @@
+Acquire and Analyze macOS Disk Images with SleuthKit
+Learning Objectives
+By completing this lab, you will:
+
+Install and configure SleuthKit on Linux for macOS forensic analysis
+Create and acquire macOS disk images using dd and other forensic tools
+Analyze macOS file systems (HFS+ and APFS) using SleuthKit commands
+Extract key macOS artifacts including system logs, user data, and application files
+Generate forensic reports from macOS disk image analysis
+Prerequisites
+Basic Linux command-line knowledge
+Understanding of file systems and disk structures
+Familiarity with forensic investigation concepts
+Root/sudo access on Linux system
+Lab Environment
+Al Nafi provides Linux-based cloud machines for this lab. Simply click Start Lab to access your dedicated Linux environment. The provided machine is bare metal with no pre-installed tools, so you will install all required software during the lab.
+
+Task 1: Install SleuthKit and Forensic Tools
+Subtask 1.1: Update System and Install Dependencies
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y build-essential git autoconf automake libtool pkg-config
+sudo apt install -y libewf-dev zlib1g-dev libssl-dev libsqlite3-dev
+sudo apt install -y afflib-tools sleuthkit autopsy testdisk
+Subtask 1.2: Verify SleuthKit Installation
+# Check SleuthKit version
+tsk_version
+
+# List available SleuthKit tools
+ls /usr/bin/*tsk* /usr/bin/fls /usr/bin/icat /usr/bin/mmls
+Subtask 1.3: Install Additional macOS Analysis Tools
+sudo apt install -y hfsprogs hfsutils
+sudo pip3 install mac_apt
+Task 2: Create and Acquire macOS Disk Images
+Subtask 2.1: Create Sample macOS Disk Image
+Since we're working on Linux, we'll create a sample HFS+ image for analysis:
+
+# Create working directory
+mkdir ~/macos_forensics && cd ~/macos_forensics
+
+# Create a sample HFS+ disk image (100MB)
+dd if=/dev/zero of=macos_sample.img bs=1M count=100
+
+# Format as HFS+
+sudo mkfs.hfsplus -v "MacOSTest" macos_sample.img
+Subtask 2.2: Mount and Populate Sample Image
+# Create mount point
+sudo mkdir /mnt/macos_test
+
+# Mount the image
+sudo mount -t hfsplus -o loop macos_sample.img /mnt/macos_test
+
+# Create sample macOS directory structure
+sudo mkdir -p /mnt/macos_test/{Applications,Library,System,Users/testuser}
+sudo mkdir -p /mnt/macos_test/Users/testuser/{Desktop,Documents,Downloads}
+
+# Create sample files
+sudo touch /mnt/macos_test/Users/testuser/Desktop/important_document.txt
+sudo touch /mnt/macos_test/Library/Preferences/com.apple.Safari.plist
+echo "Sample log entry" | sudo tee /mnt/macos_test/Library/Logs/system.log
+
+# Unmount
+sudo umount /mnt/macos_test
+Subtask 2.3: Create Forensic Hash
+# Generate MD5 and SHA256 hashes
+md5sum macos_sample.img > macos_sample.img.md5
+sha256sum macos_sample.img > macos_sample.img.sha256
+
+# Display hashes
+echo "=== Forensic Hashes ==="
+cat macos_sample.img.md5
+cat macos_sample.img.sha256
+Task 3: Analyze macOS Images with SleuthKit
+Subtask 3.1: Examine Disk Structure
+# Display partition table
+mmls macos_sample.img
+
+# Get file system information
+fsstat macos_sample.img
+
+# List root directory contents
+fls macos_sample.img
+Subtask 3.2: Navigate File System Structure
+# List Users directory
+fls macos_sample.img | grep Users
+
+# Get inode number for Users directory (typically around inode 22)
+USERS_INODE=$(fls macos_sample.img | grep "d/d.*Users" | awk '{print $2}' | cut -d: -f1)
+
+# List contents of Users directory
+fls -a macos_sample.img $USERS_INODE
+
+# List testuser directory contents
+TESTUSER_INODE=$(fls macos_sample.img $USERS_INODE | grep "testuser" | awk '{print $2}' | cut -d: -f1)
+fls -a macos_sample.img $TESTUSER_INODE
+Subtask 3.3: Extract Key macOS Artifacts
+# Create extraction directory
+mkdir extracted_artifacts
+
+# Extract system log
+SYSTEM_LOG_INODE=$(fls -r macos_sample.img | grep "system.log" | awk '{print $2}' | cut -d: -f1)
+if [ ! -z "$SYSTEM_LOG_INODE" ]; then
+    icat macos_sample.img $SYSTEM_LOG_INODE > extracted_artifacts/system.log
+    echo "System log extracted"
+fi
+
+# Extract Safari preferences
+SAFARI_PLIST_INODE=$(fls -r macos_sample.img | grep "com.apple.Safari.plist" | awk '{print $2}' | cut -d: -f1)
+if [ ! -z "$SAFARI_PLIST_INODE" ]; then
+    icat macos_sample.img $SAFARI_PLIST_INODE > extracted_artifacts/safari_prefs.plist
+    echo "Safari preferences extracted"
+fi
+
+# List all extracted files
+ls -la extracted_artifacts/
+Task 4: Advanced macOS Forensic Analysis
+Subtask 4.1: Timeline Analysis
+# Create timeline of all file activities
+fls -r -m / macos_sample.img > macos_timeline.txt
+
+# Create mactime timeline
+mactime -d -b macos_timeline.txt > macos_timeline_readable.txt
+
+# Display recent file activities
+echo "=== Recent File Activities ==="
+head -20 macos_timeline_readable.txt
+Subtask 4.2: Search for Deleted Files
+# Look for deleted files
+fls -d macos_sample.img
+
+# Search for specific file types
+echo "=== Searching for .plist files ==="
+fls -r macos_sample.img | grep -i "\.plist"
+
+echo "=== Searching for log files ==="
+fls -r macos_sample.img | grep -i "\.log"
+Subtask 4.3: Keyword Search
+# Search for keywords in the image
+echo "=== Keyword Search Results ==="
+strings macos_sample.img | grep -i "apple\|macos\|safari" | head -10
+
+# Search for email patterns
+strings macos_sample.img | grep -E "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}" | head -5
+Task 5: Generate Forensic Report
+Subtask 5.1: Create Comprehensive Report
+# Create forensic report
+cat > forensic_report.txt << 'EOF'
+=== macOS Forensic Analysis Report ===
+Generated: $(date)
+
+1. IMAGE INFORMATION:
+EOF
+
+echo "Image File: macos_sample.img" >> forensic_report.txt
+echo "Image Size: $(ls -lh macos_sample.img | awk '{print $5}')" >> forensic_report.txt
+echo "MD5 Hash: $(cat macos_sample.img.md5)" >> forensic_report.txt
+echo "SHA256 Hash: $(cat macos_sample.img.sha256)" >> forensic_report.txt
+echo "" >> forensic_report.txt
+
+echo "2. FILE SYSTEM INFORMATION:" >> forensic_report.txt
+fsstat macos_sample.img >> forensic_report.txt
+echo "" >> forensic_report.txt
+
+echo "3. DIRECTORY STRUCTURE:" >> forensic_report.txt
+fls macos_sample.img >> forensic_report.txt
+echo "" >> forensic_report.txt
+
+echo "4. EXTRACTED ARTIFACTS:" >> forensic_report.txt
+ls -la extracted_artifacts/ >> forensic_report.txt
+Subtask 5.2: Verify Report Contents
+# Display report summary
+echo "=== Forensic Report Generated ==="
+head -30 forensic_report.txt
+
+# Show report size
+echo "Report size: $(wc -l forensic_report.txt | awk '{print $1}') lines"
+Task 6: Cleanup and Documentation
+Subtask 6.1: Organize Evidence
+# Create evidence directory structure
+mkdir -p evidence/{images,reports,extracted,hashes}
+
+# Move files to appropriate directories
+mv macos_sample.img evidence/images/
+mv *.md5 *.sha256 evidence/hashes/
+mv extracted_artifacts/* evidence/extracted/
+mv forensic_report.txt macos_timeline*.txt evidence/reports/
+
+# Create case summary
+echo "Case: macOS Forensic Analysis Lab" > evidence/case_summary.txt
+echo "Date: $(date)" >> evidence/case_summary.txt
+echo "Analyst: Lab Student" >> evidence/case_summary.txt
+echo "Tools Used: SleuthKit, dd, strings" >> evidence/case_summary.txt
+Subtask 6.2: Final Verification
+# Display final directory structure
+echo "=== Final Evidence Structure ==="
+tree evidence/ || find evidence/ -type f -exec ls -la {} \;
+
+# Verify hash integrity
+echo "=== Hash Verification ==="
+cd evidence/images && md5sum -c ../hashes/macos_sample.img.md5
+Troubleshooting Tips
+Issue: SleuthKit commands return "unsupported file system" Solution: Ensure the image is properly formatted and not corrupted
+
+Issue: Cannot mount HFS+ image Solution: Install hfsprogs package and use proper mount options
+
+Issue: Timeline generation fails Solution: Verify image integrity and check file permissions
+
+Conclusion
+You have successfully completed macOS disk image acquisition and analysis using SleuthKit. This lab demonstrated essential digital forensics skills including:
+
+Installing and configuring forensic tools on Linux
+Creating and acquiring disk images with proper chain of custody
+Analyzing macOS file systems using command-line tools
+Extracting key artifacts from macOS systems
+Generating comprehensive forensic reports
+These skills are fundamental for digital forensics professionals working with macOS systems in incident response, criminal investigations, and corporate security scenarios. The techniques learned apply to real-world forensic investigations where preserving evidence integrity and thorough analysis are critical.
