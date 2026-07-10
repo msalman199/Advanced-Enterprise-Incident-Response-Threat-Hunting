@@ -1,0 +1,346 @@
+Detect Ransomware Precursors via Sysmon + Sigma Rules
+Objectives
+By completing this lab, you will:
+
+Deploy Sysmon on Linux to capture detailed system activity logs
+Implement Sigma rules for detecting ransomware precursor behaviors
+Analyze Sysmon logs to identify potential ransomware indicators
+Understand common ransomware attack patterns and detection techniques
+Prerequisites
+Basic Linux command-line knowledge
+Understanding of log analysis concepts
+Familiarity with YAML file format
+Knowledge of common ransomware attack vectors
+Lab Environment
+Al Nafi provides a Linux-based cloud machine for this lab. Simply click Start Lab to access your dedicated environment. The machine comes as bare metal with no pre-installed tools, so you'll install all required components during the lab.
+
+Task 1: Deploy Sysmon for System Activity Logging
+1.1 Install Dependencies
+Update the system and install required packages:
+
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y git build-essential cmake libxml2-dev libssl-dev wget curl unzip
+1.2 Install Sysmon for Linux
+Download and install Sysmon for Linux:
+
+wget https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb
+sudo dpkg -i packages-microsoft-prod.deb
+sudo apt update
+sudo apt install -y sysmonforlinux
+1.3 Configure Sysmon
+Create a comprehensive Sysmon configuration file:
+
+cat > sysmon-config.xml << 'EOF'
+<Sysmon schemaversion="4.70">
+  <EventFiltering>
+    <!-- Process Creation -->
+    <RuleGroup name="" groupRelation="or">
+      <ProcessCreate onmatch="exclude">
+        <Image condition="is">/usr/bin/whoami</Image>
+      </ProcessCreate>
+    </RuleGroup>
+    
+    <!-- File Creation -->
+    <RuleGroup name="" groupRelation="or">
+      <FileCreate onmatch="include">
+        <TargetFilename condition="contains">.encrypted</TargetFilename>
+        <TargetFilename condition="contains">.locked</TargetFilename>
+        <TargetFilename condition="contains">README</TargetFilename>
+        <TargetFilename condition="endswith">.txt</TargetFilename>
+      </FileCreate>
+    </RuleGroup>
+    
+    <!-- Network Connections -->
+    <RuleGroup name="" groupRelation="or">
+      <NetworkConnect onmatch="include">
+        <DestinationPort condition="is">443</DestinationPort>
+        <DestinationPort condition="is">80</DestinationPort>
+      </NetworkConnect>
+    </RuleGroup>
+  </EventFiltering>
+</Sysmon>
+EOF
+1.4 Start Sysmon Service
+Install and start Sysmon with the configuration:
+
+sudo sysmon -accepteula -i sysmon-config.xml
+sudo systemctl enable sysmon
+sudo systemctl start sysmon
+Verify Sysmon is running:
+
+sudo systemctl status sysmon
+sudo sysmon -c
+Task 2: Apply Sigma Rules for Ransomware Detection
+2.1 Install Sigma Framework
+Clone and install Sigma:
+
+git clone https://github.com/SigmaHQ/sigma.git
+cd sigma
+pip3 install -r requirements.txt
+sudo pip3 install pysigma
+2.2 Create Ransomware Detection Rules
+Create a custom Sigma rule for ransomware file encryption patterns:
+
+mkdir -p custom-rules
+cat > custom-rules/ransomware_file_encryption.yml << 'EOF'
+title: Ransomware File Encryption Activity
+id: 12345678-1234-1234-1234-123456789012
+status: experimental
+description: Detects potential ransomware file encryption based on file extension changes
+author: Security Lab
+date: 2024/01/01
+references:
+    - https://attack.mitre.org/techniques/T1486/
+logsource:
+    product: sysmon
+    service: sysmon
+detection:
+    selection:
+        EventID: 11
+        TargetFilename|contains:
+            - '.encrypted'
+            - '.locked'
+            - '.crypto'
+            - '.crypt'
+    condition: selection
+falsepositives:
+    - Legitimate encryption software
+level: high
+tags:
+    - attack.impact
+    - attack.t1486
+EOF
+Create a rule for suspicious process execution:
+
+cat > custom-rules/ransomware_process_execution.yml << 'EOF'
+title: Suspicious Ransomware Process Execution
+id: 87654321-4321-4321-4321-210987654321
+status: experimental
+description: Detects execution of processes commonly associated with ransomware
+author: Security Lab
+date: 2024/01/01
+logsource:
+    product: sysmon
+    service: sysmon
+detection:
+    selection:
+        EventID: 1
+        CommandLine|contains:
+            - 'vssadmin delete shadows'
+            - 'wbadmin delete catalog'
+            - 'bcdedit /set'
+            - 'cipher /w'
+    condition: selection
+falsepositives:
+    - System administration activities
+level: high
+tags:
+    - attack.impact
+    - attack.defense_evasion
+EOF
+2.3 Install Log Analysis Tools
+Install tools for log processing:
+
+sudo apt install -y jq rsyslog
+pip3 install sigmac
+Task 3: Analyze Sysmon Logs for Ransomware Activity
+3.1 Generate Test Activity
+Create a script to simulate ransomware-like behavior:
+
+cat > simulate_ransomware.sh << 'EOF'
+#!/bin/bash
+echo "Simulating ransomware-like activity..."
+
+# Create test files
+mkdir -p /tmp/test_files
+for i in {1..5}; do
+    echo "Important document $i" > /tmp/test_files/document$i.txt
+done
+
+# Simulate file encryption (rename files)
+for file in /tmp/test_files/*.txt; do
+    mv "$file" "$file.encrypted"
+done
+
+# Create ransom note
+echo "Your files have been encrypted! Contact us for decryption key." > /tmp/test_files/README_DECRYPT.txt
+
+# Simulate shadow copy deletion attempt (safe simulation)
+echo "vssadmin delete shadows /all /quiet" > /tmp/fake_command.log
+
+echo "Simulation complete. Check Sysmon logs for detection."
+EOF
+
+chmod +x simulate_ransomware.sh
+3.2 Execute Simulation
+Run the simulation to generate log entries:
+
+./simulate_ransomware.sh
+sleep 5
+3.3 Analyze Sysmon Logs
+Check Sysmon logs for the simulated activity:
+
+# View recent Sysmon logs
+sudo journalctl -u sysmon -n 50 --no-pager
+
+# Search for file creation events
+sudo journalctl -u sysmon | grep -i "EventID.*11" | tail -10
+
+# Search for process creation events
+sudo journalctl -u sysmon | grep -i "EventID.*1" | tail -10
+3.4 Apply Sigma Rules for Detection
+Create a simple detection script:
+
+cat > detect_ransomware.py << 'EOF'
+#!/usr/bin/env python3
+import re
+import subprocess
+import json
+
+def check_file_encryption_indicators():
+    """Check for file encryption indicators in Sysmon logs"""
+    print("=== Checking for File Encryption Indicators ===")
+    
+    # Get recent Sysmon logs
+    result = subprocess.run(['sudo', 'journalctl', '-u', 'sysmon', '-n', '100', '--no-pager'], 
+                          capture_output=True, text=True)
+    
+    logs = result.stdout
+    
+    # Look for encrypted file extensions
+    encrypted_patterns = ['.encrypted', '.locked', '.crypto', '.crypt']
+    ransom_notes = ['README', 'DECRYPT', 'RANSOM']
+    
+    findings = []
+    
+    for line in logs.split('\n'):
+        for pattern in encrypted_patterns:
+            if pattern in line and 'EventID=11' in line:
+                findings.append(f"ALERT: Encrypted file detected - {line.strip()}")
+        
+        for note in ransom_notes:
+            if note in line and 'EventID=11' in line:
+                findings.append(f"ALERT: Potential ransom note - {line.strip()}")
+    
+    if findings:
+        for finding in findings:
+            print(finding)
+    else:
+        print("No file encryption indicators found.")
+    
+    return len(findings)
+
+def check_process_indicators():
+    """Check for suspicious process execution"""
+    print("\n=== Checking for Suspicious Process Indicators ===")
+    
+    result = subprocess.run(['sudo', 'journalctl', '-u', 'sysmon', '-n', '100', '--no-pager'], 
+                          capture_output=True, text=True)
+    
+    logs = result.stdout
+    
+    suspicious_commands = ['vssadmin delete', 'wbadmin delete', 'bcdedit', 'cipher /w']
+    findings = []
+    
+    for line in logs.split('\n'):
+        for cmd in suspicious_commands:
+            if cmd.lower() in line.lower() and 'EventID=1' in line:
+                findings.append(f"ALERT: Suspicious command detected - {line.strip()}")
+    
+    if findings:
+        for finding in findings:
+            print(finding)
+    else:
+        print("No suspicious process indicators found.")
+    
+    return len(findings)
+
+def main():
+    print("Ransomware Detection Analysis")
+    print("=" * 50)
+    
+    file_alerts = check_file_encryption_indicators()
+    process_alerts = check_process_indicators()
+    
+    total_alerts = file_alerts + process_alerts
+    
+    print(f"\n=== Summary ===")
+    print(f"File encryption alerts: {file_alerts}")
+    print(f"Process execution alerts: {process_alerts}")
+    print(f"Total alerts: {total_alerts}")
+    
+    if total_alerts > 0:
+        print("\n⚠️  POTENTIAL RANSOMWARE ACTIVITY DETECTED!")
+        print("Recommended actions:")
+        print("1. Isolate affected systems")
+        print("2. Check backup integrity")
+        print("3. Investigate network connections")
+        print("4. Review recent user activities")
+    else:
+        print("\n✅ No ransomware indicators detected in current logs.")
+
+if __name__ == "__main__":
+    main()
+EOF
+
+chmod +x detect_ransomware.py
+3.5 Run Detection Analysis
+Execute the detection script:
+
+python3 detect_ransomware.py
+3.6 Advanced Log Analysis
+Create a comprehensive log analysis:
+
+cat > advanced_analysis.sh << 'EOF'
+#!/bin/bash
+echo "=== Advanced Sysmon Log Analysis ==="
+
+# Count events by type
+echo "Event Distribution:"
+sudo journalctl -u sysmon --no-pager | grep -o 'EventID=[0-9]*' | sort | uniq -c | sort -nr
+
+# Look for rapid file modifications
+echo -e "\nRapid File Modifications (potential encryption):"
+sudo journalctl -u sysmon --since "5 minutes ago" | grep "EventID=11" | wc -l
+
+# Check for network connections during file activity
+echo -e "\nNetwork Connections:"
+sudo journalctl -u sysmon --since "5 minutes ago" | grep "EventID=3" | head -5
+
+# Timeline of recent activities
+echo -e "\nRecent Activity Timeline:"
+sudo journalctl -u sysmon --since "5 minutes ago" --no-pager | tail -10
+EOF
+
+chmod +x advanced_analysis.sh
+./advanced_analysis.sh
+Verification and Testing
+Test Detection Capabilities
+Create additional test scenarios:
+
+# Test 1: Mass file renaming
+mkdir -p /tmp/mass_encrypt_test
+for i in {1..10}; do
+    echo "Test file $i" > /tmp/mass_encrypt_test/file$i.doc
+    mv /tmp/mass_encrypt_test/file$i.doc /tmp/mass_encrypt_test/file$i.doc.locked
+done
+
+# Test 2: Ransom note creation
+echo "All your files are encrypted!" > /tmp/mass_encrypt_test/HOW_TO_DECRYPT.txt
+
+# Wait and analyze
+sleep 3
+python3 detect_ransomware.py
+Cleanup
+Remove test files and reset environment:
+
+sudo rm -rf /tmp/test_files /tmp/mass_encrypt_test
+rm -f simulate_ransomware.sh detect_ransomware.py advanced_analysis.sh
+Conclusion
+In this lab, you successfully:
+
+Deployed Sysmon on Linux to capture detailed system activity logs including process creation, file modifications, and network connections
+Implemented Sigma rules specifically designed to detect ransomware precursor activities such as file encryption patterns and suspicious command execution
+Analyzed Sysmon logs using both manual techniques and automated scripts to identify potential ransomware indicators
+Created detection scripts that can automatically flag suspicious activities based on known ransomware behaviors
+This hands-on experience demonstrates how proactive monitoring and behavioral analysis are crucial for early ransomware detection. The combination of Sysmon's comprehensive logging capabilities with Sigma's standardized detection rules provides a powerful framework for identifying threats before they can cause significant damage. These skills are essential for security analysts working in threat detection and incident response roles.
