@@ -1,0 +1,6 @@
+TimeCreated,EventID,Computer,Account,LogonType,SourceIP,TargetComputer
+2024-01-15T10:30:00,4624,WS01.corp.local,user1@corp.local,3,192.168.1.100,WS01.corp.local
+2024-01-15T10:35:00,4624,WS02.corp.local,user1@corp.local,3,192.168.1.101,WS02.corp.local
+2024-01-15T10:40:00,4648,WS01.corp.local,user1@corp.local,2,192.168.1.100,DC01.corp.local
+2024-01-15T10:45:00,4624,DC01.corp.local,admin@corp.local,2,192.168.1.101,DC01.corp.local
+2024-01-15T10:50:00,5140,DC01.corp.local,admin@corp.local,3,192.168.1.101,\\DC01\ADMIN$
