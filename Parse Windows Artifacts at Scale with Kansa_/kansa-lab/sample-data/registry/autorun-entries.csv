@@ -1,0 +1,4 @@
+ComputerName,Path,Name,Value,Type
+WORKSTATION01,HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run,SecurityUpdate,C:\Windows\System32\svchost.exe,REG_SZ
+WORKSTATION02,HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run,WindowsDefender,C:\Program Files\Windows Defender\MSASCuiL.exe,REG_SZ
+WORKSTATION03,HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run,SuspiciousApp,C:\Temp\malware.exe,REG_SZ
