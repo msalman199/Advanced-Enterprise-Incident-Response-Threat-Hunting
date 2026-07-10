@@ -1,0 +1,362 @@
+Investigate Lateral Movement Using BloodHound + Windows Logs
+Objectives
+By completing this lab, you will:
+
+Set up BloodHound for Active Directory environment mapping
+Analyze Windows event logs for lateral movement patterns
+Correlate BloodHound findings with event logs to detect attack paths
+Identify common lateral movement techniques in enterprise environments
+Prerequisites
+Basic understanding of Active Directory concepts
+Familiarity with Linux command line
+Knowledge of Windows event logs structure
+Understanding of network security fundamentals
+Lab Environment
+Al Nafi provides a Linux-based cloud machine for this lab. Simply click Start Lab to access your dedicated environment. The machine comes as bare metal with no pre-installed tools, so you'll install all required software during the lab exercises.
+
+Task 1: Set up BloodHound for Active Directory Environment Mapping
+Subtask 1.1: Install Required Dependencies
+Update system and install Python, Neo4j, and Java:
+
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y python3 python3-pip openjdk-11-jdk wget curl unzip
+Subtask 1.2: Install Neo4j Database
+Download and install Neo4j Community Edition:
+
+wget -O - https://debian.neo4j.com/neotechnology.gpg.key | sudo apt-key add -
+echo 'deb https://debian.neo4j.com stable 4.4' | sudo tee /etc/apt/sources.list.d/neo4j.list
+sudo apt update
+sudo apt install neo4j=1:4.4.12
+Configure Neo4j:
+
+sudo systemctl enable neo4j
+sudo systemctl start neo4j
+sudo systemctl status neo4j
+Set initial password:
+
+sudo neo4j-admin set-initial-password bloodhound123
+Subtask 1.3: Install BloodHound Application
+Download and install BloodHound:
+
+cd /tmp
+wget https://github.com/BloodHoundAD/BloodHound/releases/download/4.3.1/BloodHound-linux-x64.zip
+unzip BloodHound-linux-x64.zip
+sudo mv BloodHound-linux-x64 /opt/bloodhound
+sudo chmod +x /opt/bloodhound/BloodHound
+Subtask 1.4: Install BloodHound Collectors
+Install SharpHound collector:
+
+mkdir ~/bloodhound-data
+cd ~/bloodhound-data
+wget https://github.com/BloodHoundAD/BloodHound/raw/master/Collectors/SharpHound.exe
+wget https://github.com/BloodHoundAD/BloodHound/raw/master/Collectors/SharpHound.ps1
+Install BloodHound Python collector:
+
+pip3 install bloodhound
+Subtask 1.5: Create Sample AD Data
+Generate sample Active Directory data for analysis:
+
+cd ~/bloodhound-data
+cat > sample_ad_data.json << 'EOF'
+{
+  "computers": [
+    {"name": "DC01.corp.local", "objectid": "S-1-5-21-1234567890-1234567890-1234567890-1000"},
+    {"name": "WS01.corp.local", "objectid": "S-1-5-21-1234567890-1234567890-1234567890-1001"},
+    {"name": "WS02.corp.local", "objectid": "S-1-5-21-1234567890-1234567890-1234567890-1002"}
+  ],
+  "users": [
+    {"name": "admin@corp.local", "objectid": "S-1-5-21-1234567890-1234567890-1234567890-500"},
+    {"name": "user1@corp.local", "objectid": "S-1-5-21-1234567890-1234567890-1234567890-1101"},
+    {"name": "user2@corp.local", "objectid": "S-1-5-21-1234567890-1234567890-1234567890-1102"}
+  ]
+}
+EOF
+Task 2: Analyze Windows Event Logs for Lateral Movement Patterns
+Subtask 2.1: Create Sample Windows Event Logs
+Generate sample Windows event logs containing lateral movement indicators:
+
+mkdir ~/windows-logs
+cd ~/windows-logs
+
+cat > security_events.evtx.csv << 'EOF'
+TimeCreated,EventID,Computer,Account,LogonType,SourceIP,TargetComputer
+2024-01-15T10:30:00,4624,WS01.corp.local,user1@corp.local,3,192.168.1.100,WS01.corp.local
+2024-01-15T10:35:00,4624,WS02.corp.local,user1@corp.local,3,192.168.1.101,WS02.corp.local
+2024-01-15T10:40:00,4648,WS01.corp.local,user1@corp.local,2,192.168.1.100,DC01.corp.local
+2024-01-15T10:45:00,4624,DC01.corp.local,admin@corp.local,2,192.168.1.101,DC01.corp.local
+2024-01-15T10:50:00,5140,DC01.corp.local,admin@corp.local,3,192.168.1.101,\\DC01\ADMIN$
+EOF
+Subtask 2.2: Install Log Analysis Tools
+Install tools for log analysis:
+
+sudo apt install -y jq csvkit python3-pandas
+pip3 install pandas matplotlib seaborn
+Subtask 2.3: Analyze Logon Events
+Create a Python script to analyze lateral movement patterns:
+
+cat > analyze_logs.py << 'EOF'
+#!/usr/bin/env python3
+import pandas as pd
+import json
+from collections import defaultdict
+
+def analyze_lateral_movement(log_file):
+    # Read the CSV file
+    df = pd.read_csv(log_file)
+    
+    # Group by account to track movement
+    movement_patterns = defaultdict(list)
+    
+    for _, row in df.iterrows():
+        account = row['Account']
+        computer = row['Computer']
+        event_id = row['EventID']
+        time = row['TimeCreated']
+        
+        movement_patterns[account].append({
+            'time': time,
+            'computer': computer,
+            'event_id': event_id,
+            'source_ip': row.get('SourceIP', 'N/A')
+        })
+    
+    # Detect potential lateral movement
+    suspicious_accounts = []
+    for account, events in movement_patterns.items():
+        unique_computers = set([event['computer'] for event in events])
+        if len(unique_computers) > 1:
+            suspicious_accounts.append({
+                'account': account,
+                'computers_accessed': list(unique_computers),
+                'event_count': len(events)
+            })
+    
+    return suspicious_accounts
+
+# Analyze the logs
+results = analyze_lateral_movement('security_events.evtx.csv')
+print("Potential Lateral Movement Detected:")
+print(json.dumps(results, indent=2))
+EOF
+
+chmod +x analyze_logs.py
+python3 analyze_logs.py
+Subtask 2.4: Extract Key Indicators
+Create a script to extract lateral movement indicators:
+
+cat > extract_indicators.py << 'EOF'
+#!/usr/bin/env python3
+import pandas as pd
+
+def extract_indicators(log_file):
+    df = pd.read_csv(log_file)
+    
+    # Key event IDs for lateral movement
+    lateral_movement_events = [4624, 4648, 4672, 5140]
+    
+    # Filter relevant events
+    filtered_df = df[df['EventID'].isin(lateral_movement_events)]
+    
+    print("Lateral Movement Indicators:")
+    print("=" * 50)
+    
+    for _, row in filtered_df.iterrows():
+        print(f"Time: {row['TimeCreated']}")
+        print(f"Event ID: {row['EventID']}")
+        print(f"Account: {row['Account']}")
+        print(f"Computer: {row['Computer']}")
+        print(f"Source IP: {row.get('SourceIP', 'N/A')}")
+        print("-" * 30)
+
+extract_indicators('security_events.evtx.csv')
+EOF
+
+python3 extract_indicators.py
+Task 3: Correlate BloodHound Findings with Event Logs
+Subtask 3.1: Start BloodHound Interface
+Launch BloodHound application:
+
+# Start Neo4j if not running
+sudo systemctl start neo4j
+
+# Launch BloodHound in background
+cd /opt/bloodhound
+./BloodHound &
+Note: BloodHound will open a GUI interface. For this lab, we'll work with the data programmatically.
+
+Subtask 3.2: Create Correlation Script
+Develop a script to correlate BloodHound data with Windows logs:
+
+cat > correlate_data.py << 'EOF'
+#!/usr/bin/env python3
+import json
+import pandas as pd
+from datetime import datetime
+
+def load_bloodhound_data(file_path):
+    with open(file_path, 'r') as f:
+        return json.load(f)
+
+def correlate_findings(ad_data_file, log_file):
+    # Load BloodHound data
+    ad_data = load_bloodhound_data(ad_data_file)
+    
+    # Load Windows logs
+    log_df = pd.read_csv(log_file)
+    
+    # Extract computer and user lists from AD data
+    ad_computers = {comp['name'].lower() for comp in ad_data['computers']}
+    ad_users = {user['name'].lower() for user in ad_data['users']}
+    
+    print("Correlation Analysis Results:")
+    print("=" * 50)
+    
+    # Check if logged events involve AD assets
+    for _, row in log_df.iterrows():
+        computer = row['Computer'].lower()
+        account = row['Account'].lower()
+        
+        if computer in ad_computers and account in ad_users:
+            print(f"MATCH FOUND:")
+            print(f"  Time: {row['TimeCreated']}")
+            print(f"  Event: {row['EventID']}")
+            print(f"  Account: {account}")
+            print(f"  Computer: {computer}")
+            print(f"  Risk Level: HIGH")
+            print("-" * 30)
+
+# Run correlation
+correlate_findings('sample_ad_data.json', 'security_events.evtx.csv')
+EOF
+
+python3 correlate_data.py
+Subtask 3.3: Generate Attack Path Analysis
+Create a script to identify potential attack paths:
+
+cat > attack_paths.py << 'EOF'
+#!/usr/bin/env python3
+import json
+import pandas as pd
+from collections import defaultdict
+
+def analyze_attack_paths(ad_data_file, log_file):
+    # Load data
+    with open(ad_data_file, 'r') as f:
+        ad_data = json.load(f)
+    
+    log_df = pd.read_csv(log_file)
+    
+    # Build attack timeline
+    attack_timeline = []
+    
+    for _, row in log_df.iterrows():
+        attack_timeline.append({
+            'timestamp': row['TimeCreated'],
+            'event_id': row['EventID'],
+            'account': row['Account'],
+            'computer': row['Computer'],
+            'source_ip': row.get('SourceIP', 'Unknown')
+        })
+    
+    # Sort by timestamp
+    attack_timeline.sort(key=lambda x: x['timestamp'])
+    
+    print("Potential Attack Path Analysis:")
+    print("=" * 50)
+    
+    current_account = None
+    step = 1
+    
+    for event in attack_timeline:
+        if event['account'] != current_account:
+            print(f"\nStep {step}: Account Compromise")
+            print(f"  Account: {event['account']}")
+            current_account = event['account']
+            step += 1
+        
+        print(f"  {event['timestamp']}: Event {event['event_id']} on {event['computer']}")
+        
+        if event['event_id'] == 4648:
+            print(f"    -> Explicit credential use detected")
+        elif event['event_id'] == 5140:
+            print(f"    -> Network share access detected")
+
+analyze_attack_paths('sample_ad_data.json', 'security_events.evtx.csv')
+EOF
+
+python3 attack_paths.py
+Subtask 3.4: Create Investigation Report
+Generate a comprehensive investigation report:
+
+cat > generate_report.py << 'EOF'
+#!/usr/bin/env python3
+import json
+import pandas as pd
+from datetime import datetime
+
+def generate_investigation_report():
+    print("LATERAL MOVEMENT INVESTIGATION REPORT")
+    print("=" * 60)
+    print(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print()
+    
+    # Load and analyze data
+    log_df = pd.read_csv('security_events.evtx.csv')
+    
+    print("EXECUTIVE SUMMARY:")
+    print("-" * 20)
+    print(f"Total Events Analyzed: {len(log_df)}")
+    print(f"Unique Accounts: {log_df['Account'].nunique()}")
+    print(f"Unique Computers: {log_df['Computer'].nunique()}")
+    print()
+    
+    print("KEY FINDINGS:")
+    print("-" * 20)
+    
+    # Identify accounts with multiple computer access
+    account_computers = log_df.groupby('Account')['Computer'].nunique()
+    suspicious_accounts = account_computers[account_computers > 1]
+    
+    for account, computer_count in suspicious_accounts.items():
+        print(f"• {account}: Accessed {computer_count} different computers")
+        computers = log_df[log_df['Account'] == account]['Computer'].unique()
+        print(f"  Computers: {', '.join(computers)}")
+    
+    print()
+    print("RECOMMENDATIONS:")
+    print("-" * 20)
+    print("• Monitor accounts with cross-system access")
+    print("• Implement additional authentication for privileged accounts")
+    print("• Review network segmentation policies")
+    print("• Enable advanced logging on critical systems")
+
+generate_investigation_report()
+EOF
+
+python3 generate_report.py
+Verification Steps
+Verify your lab completion by running these commands:
+
+# Check Neo4j status
+sudo systemctl status neo4j
+
+# Verify BloodHound installation
+ls -la /opt/bloodhound/
+
+# Check analysis results
+ls -la ~/windows-logs/
+ls -la ~/bloodhound-data/
+
+# Run final verification
+echo "Lab 12 Verification Complete"
+echo "BloodHound: $(ls /opt/bloodhound/BloodHound 2>/dev/null && echo 'Installed' || echo 'Not Found')"
+echo "Neo4j: $(sudo systemctl is-active neo4j)"
+echo "Log Analysis: $(ls ~/windows-logs/*.csv 2>/dev/null | wc -l) files processed"
+Conclusion
+You have successfully completed Lab 12, where you learned to investigate lateral movement using BloodHound and Windows logs. You accomplished:
+
+BloodHound Setup: Installed and configured BloodHound with Neo4j for Active Directory analysis
+Log Analysis: Analyzed Windows event logs to identify lateral movement patterns
+Data Correlation: Correlated BloodHound findings with event logs to detect attack paths
+Investigation Skills: Developed practical skills for detecting and analyzing lateral movement in enterprise environments
+These skills are essential for cybersecurity professionals working in threat hunting, incident response, and security operations roles. The combination of BloodHound's graph-based analysis with traditional log analysis provides a comprehensive approach to detecting advanced persistent threats and lateral movement techniques in enterprise networks.
