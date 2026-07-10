@@ -1,0 +1,8 @@
+{"timestamp":"2024-01-15T10:30:00Z","event_type":"malware_detection","ioc_type":"hash","ioc_value":"d41d8cd98f00b204e9800998ecf8427e","severity":"high","source_ip":"192.168.1.100","destination_ip":"10.0.0.50","action":"blocked"}
+{"timestamp":"2024-01-15T10:35:00Z","event_type":"suspicious_domain","ioc_type":"domain","ioc_value":"malicious-site.com","severity":"medium","source_ip":"192.168.1.101","destination_ip":"8.8.8.8","action":"monitored"}
+{"timestamp":"2024-01-15T10:40:00Z","event_type":"ip_reputation","ioc_type":"ip","ioc_value":"203.0.113.5","severity":"high","source_ip":"192.168.1.102","destination_ip":"203.0.113.5","action":"blocked"}
+{"timestamp":"2024-01-15T10:45:00Z","event_type":"file_hash","ioc_type":"hash","ioc_value":"5d41402abc4b2a76b9719d911017c592","severity":"critical","source_ip":"192.168.1.103","destination_ip":"10.0.0.51","action":"quarantined"}
+{"timestamp":"2024-01-15T10:50:00Z","event_type":"url_analysis","ioc_type":"url","ioc_value":"http://suspicious-url.net/payload","severity":"medium","source_ip":"192.168.1.104","destination_ip":"198.51.100.10","action":"monitored"}
+{"timestamp":"2024-01-15T11:00:00Z","event_type":"malware_detection","ioc_type":"hash","ioc_value":"098f6bcd4621d373cade4e832627b4f6","severity":"high","source_ip":"192.168.1.105","destination_ip":"10.0.0.52","action":"blocked"}
+{"timestamp":"2024-01-15T11:05:00Z","event_type":"suspicious_domain","ioc_type":"domain","ioc_value":"phishing-example.org","severity":"critical","source_ip":"192.168.1.106","destination_ip":"8.8.4.4","action":"blocked"}
+{"timestamp":"2024-01-15T11:10:00Z","event_type":"ip_reputation","ioc_type":"ip","ioc_value":"198.51.100.25","severity":"medium","source_ip":"192.168.1.107","destination_ip":"198.51.100.25","action":"monitored"}
