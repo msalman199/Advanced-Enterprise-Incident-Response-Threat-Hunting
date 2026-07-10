@@ -1,0 +1,218 @@
+Analyze Linux Auth & Syslog for Privilege Escalation Attempts
+Learning Objectives
+By completing this lab, you will:
+
+Parse and analyze Linux authentication logs for suspicious activity
+Examine syslog data to identify privilege escalation attempts
+Correlate log data across multiple sources to detect attack patterns
+Use command-line tools to investigate security incidents
+Prerequisites
+Basic Linux command-line knowledge
+Understanding of user permissions and sudo functionality
+Familiarity with log file formats
+Knowledge of common privilege escalation techniques
+Lab Environment
+Al Nafi provides Linux-based cloud machines for this lab. Simply click Start Lab to access your dedicated Linux machine. The provided system is bare metal with no pre-installed security tools, so you will install required tools during the lab exercises.
+
+Task 1: Parse Linux Authentication Logs
+1.1 Install Required Tools
+# Update package manager
+sudo apt update
+
+# Install log analysis tools
+sudo apt install -y rsyslog logrotate grep gawk sed
+1.2 Generate Sample Authentication Events
+# Create test user accounts
+sudo useradd -m testuser1
+sudo useradd -m testuser2
+echo "testuser1:password123" | sudo chpasswd
+echo "testuser2:admin456" | sudo chpasswd
+
+# Generate authentication events
+su - testuser1 -c "whoami"
+sudo -u testuser2 whoami
+ssh localhost -l testuser1 "exit" 2>/dev/null || true
+1.3 Examine Authentication Log Structure
+# View recent authentication events
+sudo tail -20 /var/log/auth.log
+
+# Parse successful logins
+sudo grep "session opened" /var/log/auth.log | tail -10
+
+# Parse failed login attempts
+sudo grep "authentication failure" /var/log/auth.log | tail -10
+1.4 Extract Key Authentication Data
+# Create parsing script
+cat > parse_auth.sh << 'EOF'
+#!/bin/bash
+echo "=== AUTHENTICATION ANALYSIS ==="
+echo "Recent sudo attempts:"
+sudo grep "sudo:" /var/log/auth.log | tail -5
+
+echo -e "\nFailed password attempts:"
+sudo grep "Failed password" /var/log/auth.log | tail -5
+
+echo -e "\nSuccessful logins:"
+sudo grep "session opened" /var/log/auth.log | tail -5
+EOF
+
+chmod +x parse_auth.sh
+./parse_auth.sh
+Task 2: Analyze Syslog Data for Privilege Escalation
+2.1 Generate Privilege Escalation Events
+# Simulate privilege escalation attempts
+sudo -u testuser1 sudo whoami 2>/dev/null || echo "Access denied"
+sudo -u testuser2 sudo ls /root 2>/dev/null || echo "Access denied"
+
+# Add testuser2 to sudo group (simulating successful escalation)
+sudo usermod -aG sudo testuser2
+sudo -u testuser2 sudo whoami
+2.2 Analyze Syslog for Escalation Indicators
+# Check for sudo usage patterns
+sudo grep -E "(sudo|su):" /var/log/syslog | tail -10
+
+# Look for user modifications
+sudo grep "usermod\|useradd\|userdel" /var/log/syslog | tail -5
+
+# Check for group changes
+sudo grep "group" /var/log/syslog | grep -E "(add|mod|del)" | tail -5
+2.3 Create Privilege Escalation Detection Script
+cat > detect_escalation.sh << 'EOF'
+#!/bin/bash
+echo "=== PRIVILEGE ESCALATION DETECTION ==="
+
+echo "1. Sudo usage by non-privileged users:"
+sudo awk '/sudo:/ && !/root/ {print $1, $2, $3, $5, $6}' /var/log/auth.log | tail -5
+
+echo -e "\n2. User account modifications:"
+sudo grep -E "usermod|useradd|groupadd" /var/log/syslog | tail -3
+
+echo -e "\n3. Failed sudo attempts:"
+sudo grep "sudo.*FAILED" /var/log/auth.log | tail -3
+
+echo -e "\n4. Successful privilege escalation:"
+sudo grep "sudo.*root" /var/log/auth.log | tail -3
+EOF
+
+chmod +x detect_escalation.sh
+./detect_escalation.sh
+Task 3: Correlate Data to Detect Attack Patterns
+3.1 Create Timeline Analysis
+cat > timeline_analysis.sh << 'EOF'
+#!/bin/bash
+echo "=== ATTACK TIMELINE ANALYSIS ==="
+
+# Get current date for filtering
+TODAY=$(date +"%b %d")
+
+echo "Timeline of security events for $TODAY:"
+{
+    sudo grep "$TODAY" /var/log/auth.log | grep -E "(Failed|sudo|su):"
+    sudo grep "$TODAY" /var/log/syslog | grep -E "(usermod|useradd|sudo)"
+} | sort -k3 -M -k4 -n | tail -10
+EOF
+
+chmod +x timeline_analysis.sh
+./timeline_analysis.sh
+3.2 Pattern Detection Script
+cat > pattern_detection.sh << 'EOF'
+#!/bin/bash
+echo "=== ATTACK PATTERN DETECTION ==="
+
+# Check for rapid sudo attempts
+echo "1. Rapid sudo attempts (potential brute force):"
+sudo awk '/sudo:/ {print $3 " " $4 " " $5}' /var/log/auth.log | sort | uniq -c | sort -nr | head -5
+
+# Check for privilege escalation after failed attempts
+echo -e "\n2. Users with both failed and successful sudo:"
+FAILED_USERS=$(sudo grep "sudo.*FAILED" /var/log/auth.log | awk '{print $5}' | sort -u)
+for user in $FAILED_USERS; do
+    SUCCESS=$(sudo grep "sudo.*$user" /var/log/auth.log | grep -v "FAILED" | wc -l)
+    if [ $SUCCESS -gt 0 ]; then
+        echo "User $user: Failed attempts followed by success"
+    fi
+done
+
+# Check for unusual time patterns
+echo -e "\n3. Off-hours activity (outside 9-17):"
+sudo awk '/sudo:/ {
+    hour = substr($3, 1, 2)
+    if (hour < 9 || hour > 17) print $0
+}' /var/log/auth.log | tail -3
+EOF
+
+chmod +x pattern_detection.sh
+./pattern_detection.sh
+3.3 Comprehensive Security Report
+cat > security_report.sh << 'EOF'
+#!/bin/bash
+echo "=== COMPREHENSIVE SECURITY REPORT ==="
+echo "Generated: $(date)"
+echo "=========================================="
+
+echo -e "\n1. AUTHENTICATION SUMMARY:"
+echo "Total login attempts: $(sudo grep -c "authentication" /var/log/auth.log)"
+echo "Failed logins: $(sudo grep -c "Failed password" /var/log/auth.log)"
+echo "Successful logins: $(sudo grep -c "session opened" /var/log/auth.log)"
+
+echo -e "\n2. SUDO ACTIVITY:"
+echo "Total sudo commands: $(sudo grep -c "sudo:" /var/log/auth.log)"
+echo "Failed sudo attempts: $(sudo grep -c "sudo.*FAILED" /var/log/auth.log)"
+echo "Unique users using sudo: $(sudo grep "sudo:" /var/log/auth.log | awk '{print $5}' | sort -u | wc -l)"
+
+echo -e "\n3. PRIVILEGE ESCALATION INDICATORS:"
+echo "User modifications: $(sudo grep -c -E "usermod|useradd" /var/log/syslog)"
+echo "Group modifications: $(sudo grep -c "groupadd\|groupmod" /var/log/syslog)"
+
+echo -e "\n4. TOP SUSPICIOUS ACTIVITIES:"
+sudo grep -E "(Failed|sudo.*FAILED|usermod)" /var/log/auth.log /var/log/syslog | tail -5
+
+echo -e "\n5. RECOMMENDATIONS:"
+echo "- Monitor users with failed sudo attempts"
+echo "- Review off-hours authentication activity"
+echo "- Investigate rapid authentication patterns"
+echo "- Verify legitimacy of user/group modifications"
+EOF
+
+chmod +x security_report.sh
+./security_report.sh
+3.4 Real-time Monitoring Setup
+# Create real-time monitoring script
+cat > realtime_monitor.sh << 'EOF'
+#!/bin/bash
+echo "Starting real-time privilege escalation monitoring..."
+echo "Press Ctrl+C to stop"
+
+tail -f /var/log/auth.log | while read line; do
+    if echo "$line" | grep -q -E "(sudo|Failed|usermod)"; then
+        echo "[ALERT] $(date): $line"
+    fi
+done
+EOF
+
+chmod +x realtime_monitor.sh
+echo "Real-time monitor created. Run './realtime_monitor.sh' to start monitoring."
+Verification and Testing
+Test Your Analysis Skills
+# Generate test scenario
+sudo -u testuser1 sudo ls /root 2>/dev/null || echo "Expected failure"
+sudo -u testuser2 sudo ls /root
+sudo usermod -aG adm testuser1
+
+# Run your analysis
+./security_report.sh
+Cleanup
+# Remove test users
+sudo userdel -r testuser1 2>/dev/null
+sudo userdel -r testuser2 2>/dev/null
+
+# Remove scripts (optional)
+rm -f parse_auth.sh detect_escalation.sh timeline_analysis.sh pattern_detection.sh security_report.sh realtime_monitor.sh
+Conclusion
+You have successfully completed a comprehensive analysis of Linux authentication and system logs for privilege escalation detection. You learned to:
+
+Parse authentication logs to identify login patterns and failures
+Analyze syslog data for system-level privilege changes
+Correlate multiple log sources to detect attack patterns
+Create automated scripts for ongoing security monitoring
+These skills are essential for security analysts, system administrators, and incident response teams who need to detect and investigate privilege escalation attempts in Linux environments. The techniques you practiced help identify both successful attacks and attempted breaches, enabling proactive security measures.
