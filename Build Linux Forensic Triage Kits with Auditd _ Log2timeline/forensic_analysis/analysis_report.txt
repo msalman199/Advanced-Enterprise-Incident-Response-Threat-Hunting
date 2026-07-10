@@ -1,0 +1,8 @@
+=== Forensic Timeline Analysis Report ===
+Generated: $(date)
+
+Timeline Statistics:
+- Total events: $(wc -l < system_timeline.csv)
+- Recent events: $(wc -l < recent_events.csv)
+
+Key Findings:
