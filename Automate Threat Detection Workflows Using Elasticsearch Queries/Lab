@@ -1,0 +1,612 @@
+Automate Threat Detection Workflows Using Elasticsearch Queries
+Learning Objectives
+By completing this lab, you will:
+
+Create and automate advanced Elasticsearch queries for threat detection
+Configure automated alerts for security threats
+Build and test complete threat detection workflows
+Implement real-time monitoring using Elasticsearch and Kibana
+Prerequisites
+Basic understanding of Linux command line
+Familiarity with JSON format
+Basic knowledge of security concepts (logs, threats, indicators)
+Understanding of HTTP requests and REST APIs
+Lab Environment
+Al Nafi provides Linux-based cloud machines for this lab. Simply click Start Lab to access your dedicated Linux machine. The provided machine is bare metal with no pre-installed tools, so you will install all required components during the lab.
+
+Task 1: Install and Configure Elasticsearch Stack
+Subtask 1.1: Install Java and Elasticsearch
+# Update system packages
+sudo apt update && sudo apt upgrade -y
+
+# Install Java 11 (required for Elasticsearch)
+sudo apt install openjdk-11-jdk -y
+
+# Verify Java installation
+java -version
+
+# Download and install Elasticsearch
+wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-8.11.0-amd64.deb
+sudo dpkg -i elasticsearch-8.11.0-amd64.deb
+
+# Configure Elasticsearch for single-node setup
+sudo nano /etc/elasticsearch/elasticsearch.yml
+Add these configurations to elasticsearch.yml:
+
+cluster.name: threat-detection-cluster
+node.name: node-1
+network.host: localhost
+http.port: 9200
+discovery.type: single-node
+xpack.security.enabled: false
+xpack.security.enrollment.enabled: false
+Subtask 1.2: Install Kibana
+# Download and install Kibana
+wget https://artifacts.elastic.co/downloads/kibana/kibana-8.11.0-amd64.deb
+sudo dpkg -i kibana-8.11.0-amd64.deb
+
+# Configure Kibana
+sudo nano /etc/kibana/kibana.yml
+Add these configurations to kibana.yml:
+
+server.port: 5601
+server.host: "localhost"
+elasticsearch.hosts: ["http://localhost:9200"]
+Subtask 1.3: Start Services
+# Enable and start Elasticsearch
+sudo systemctl enable elasticsearch
+sudo systemctl start elasticsearch
+
+# Enable and start Kibana
+sudo systemctl enable kibana
+sudo systemctl start kibana
+
+# Verify services are running
+sudo systemctl status elasticsearch
+sudo systemctl status kibana
+
+# Test Elasticsearch connection
+curl -X GET "localhost:9200/"
+Task 2: Create Sample Security Data and Indices
+Subtask 2.1: Create Security Log Index
+# Create index template for security logs
+curl -X PUT "localhost:9200/_index_template/security-logs" -H 'Content-Type: application/json' -d'
+{
+  "index_patterns": ["security-logs-*"],
+  "template": {
+    "mappings": {
+      "properties": {
+        "@timestamp": {"type": "date"},
+        "source_ip": {"type": "ip"},
+        "destination_ip": {"type": "ip"},
+        "source_port": {"type": "integer"},
+        "destination_port": {"type": "integer"},
+        "protocol": {"type": "keyword"},
+        "action": {"type": "keyword"},
+        "severity": {"type": "keyword"},
+        "event_type": {"type": "keyword"},
+        "user_agent": {"type": "text"},
+        "url": {"type": "keyword"},
+        "status_code": {"type": "integer"},
+        "bytes_transferred": {"type": "long"},
+        "country": {"type": "keyword"},
+        "threat_score": {"type": "integer"}
+      }
+    }
+  }
+}'
+Subtask 2.2: Generate Sample Threat Data
+Create a script to generate sample security events:
+
+# Create data generation script
+cat > generate_security_data.py << 'EOF'
+#!/usr/bin/env python3
+import json
+import random
+import datetime
+import requests
+from time import sleep
+
+# Malicious IPs and patterns for realistic threat simulation
+malicious_ips = ["192.168.1.100", "10.0.0.50", "172.16.0.25", "203.0.113.10"]
+suspicious_user_agents = [
+    "sqlmap/1.0",
+    "Nikto/2.1.6",
+    "Mozilla/5.0 (compatible; Nmap Scripting Engine)",
+    "python-requests/2.25.1"
+]
+attack_urls = [
+    "/admin/login.php",
+    "/wp-admin/admin-ajax.php",
+    "/etc/passwd",
+    "/../../../etc/shadow",
+    "/phpMyAdmin/",
+    "/shell.php"
+]
+
+def generate_security_event():
+    event_types = ["web_attack", "port_scan", "brute_force", "malware_download", "normal_traffic"]
+    event_type = random.choice(event_types)
+    
+    base_event = {
+        "@timestamp": datetime.datetime.now().isoformat(),
+        "source_ip": random.choice(malicious_ips) if event_type != "normal_traffic" else f"192.168.1.{random.randint(1,254)}",
+        "destination_ip": "192.168.1.10",
+        "source_port": random.randint(1024, 65535),
+        "destination_port": random.choice([80, 443, 22, 21, 3389]),
+        "protocol": random.choice(["TCP", "UDP"]),
+        "event_type": event_type
+    }
+    
+    if event_type == "web_attack":
+        base_event.update({
+            "action": "blocked",
+            "severity": "high",
+            "user_agent": random.choice(suspicious_user_agents),
+            "url": random.choice(attack_urls),
+            "status_code": random.choice([403, 404, 500]),
+            "threat_score": random.randint(80, 100)
+        })
+    elif event_type == "port_scan":
+        base_event.update({
+            "action": "detected",
+            "severity": "medium",
+            "threat_score": random.randint(60, 80)
+        })
+    elif event_type == "brute_force":
+        base_event.update({
+            "action": "blocked",
+            "severity": "high",
+            "url": "/login",
+            "status_code": 401,
+            "threat_score": random.randint(70, 90)
+        })
+    else:
+        base_event.update({
+            "action": "allowed",
+            "severity": "low",
+            "status_code": 200,
+            "threat_score": random.randint(1, 30)
+        })
+    
+    return base_event
+
+def send_to_elasticsearch(event):
+    url = "http://localhost:9200/security-logs-2024/_doc"
+    headers = {"Content-Type": "application/json"}
+    response = requests.post(url, json=event, headers=headers)
+    return response.status_code == 201
+
+# Generate and send events
+for i in range(100):
+    event = generate_security_event()
+    if send_to_elasticsearch(event):
+        print(f"Event {i+1} sent successfully")
+    else:
+        print(f"Failed to send event {i+1}")
+    sleep(0.1)
+
+print("Sample data generation completed!")
+EOF
+
+# Install Python requests library
+sudo apt install python3-pip -y
+pip3 install requests
+
+# Run the data generation script
+python3 generate_security_data.py
+Task 3: Create Advanced Threat Detection Queries
+Subtask 3.1: Create High-Severity Threat Detection Query
+# Create query for high-severity threats
+curl -X GET "localhost:9200/security-logs-*/_search" -H 'Content-Type: application/json' -d'
+{
+  "query": {
+    "bool": {
+      "must": [
+        {"range": {"@timestamp": {"gte": "now-1h"}}},
+        {"term": {"severity": "high"}},
+        {"range": {"threat_score": {"gte": 70}}}
+      ]
+    }
+  },
+  "sort": [{"@timestamp": {"order": "desc"}}],
+  "size": 10
+}'
+Subtask 3.2: Create Brute Force Attack Detection Query
+# Query to detect brute force attacks
+curl -X GET "localhost:9200/security-logs-*/_search" -H 'Content-Type: application/json' -d'
+{
+  "query": {
+    "bool": {
+      "must": [
+        {"range": {"@timestamp": {"gte": "now-5m"}}},
+        {"term": {"event_type": "brute_force"}},
+        {"term": {"status_code": 401}}
+      ]
+    }
+  },
+  "aggs": {
+    "attacks_by_ip": {
+      "terms": {
+        "field": "source_ip",
+        "size": 10
+      },
+      "aggs": {
+        "attack_count": {
+          "value_count": {
+            "field": "source_ip"
+          }
+        }
+      }
+    }
+  }
+}'
+Subtask 3.3: Create Suspicious User Agent Detection Query
+# Query to detect suspicious user agents
+curl -X GET "localhost:9200/security-logs-*/_search" -H 'Content-Type: application/json' -d'
+{
+  "query": {
+    "bool": {
+      "should": [
+        {"wildcard": {"user_agent": "*sqlmap*"}},
+        {"wildcard": {"user_agent": "*Nikto*"}},
+        {"wildcard": {"user_agent": "*Nmap*"}},
+        {"wildcard": {"user_agent": "*python-requests*"}}
+      ],
+      "minimum_should_match": 1,
+      "filter": [
+        {"range": {"@timestamp": {"gte": "now-1h"}}}
+      ]
+    }
+  },
+  "sort": [{"@timestamp": {"order": "desc"}}]
+}'
+Task 4: Set Up Automated Alerts and Workflows
+Subtask 4.1: Install and Configure Elastalert
+# Install Elastalert2 (modern version)
+pip3 install elastalert2
+
+# Create Elastalert configuration directory
+mkdir -p /home/$USER/elastalert
+cd /home/$USER/elastalert
+
+# Create main configuration file
+cat > config.yaml << 'EOF'
+rules_folder: rules
+run_every:
+  minutes: 1
+buffer_time:
+  minutes: 15
+es_host: localhost
+es_port: 9200
+writeback_index: elastalert_status
+writeback_alias: elastalert_alerts
+alert_time_limit:
+  days: 2
+EOF
+Subtask 4.2: Create Threat Detection Rules
+Create directory for rules:
+
+mkdir -p rules
+Create high-severity threat alert rule:
+
+cat > rules/high_severity_threats.yaml << 'EOF'
+name: High Severity Threat Detection
+type: frequency
+index: security-logs-*
+num_events: 1
+timeframe:
+  minutes: 5
+
+filter:
+- bool:
+    must:
+    - term:
+        severity: "high"
+    - range:
+        threat_score:
+          gte: 80
+
+alert:
+- "email"
+- "debug"
+
+email:
+- "security@company.com"
+
+alert_text: |
+  High severity threat detected!
+  
+  Event Type: {0}
+  Source IP: {1}
+  Threat Score: {2}
+  Timestamp: {3}
+
+alert_text_args:
+  - event_type
+  - source_ip
+  - threat_score
+  - "@timestamp"
+
+include:
+  - source_ip
+  - destination_ip
+  - event_type
+  - severity
+  - threat_score
+  - action
+EOF
+Create brute force detection rule:
+
+cat > rules/brute_force_detection.yaml << 'EOF'
+name: Brute Force Attack Detection
+type: frequency
+index: security-logs-*
+num_events: 3
+timeframe:
+  minutes: 5
+
+filter:
+- bool:
+    must:
+    - term:
+        event_type: "brute_force"
+    - term:
+        status_code: 401
+
+query_key: source_ip
+
+alert:
+- "debug"
+
+alert_text: |
+  Brute force attack detected!
+  
+  Source IP: {0}
+  Number of attempts: {1}
+  Time window: 5 minutes
+
+alert_text_args:
+  - source_ip
+  - num_matches
+
+include:
+  - source_ip
+  - destination_ip
+  - url
+  - status_code
+  - "@timestamp"
+EOF
+Subtask 4.3: Create Custom Alert Script
+# Create custom alert handler
+cat > custom_alert.py << 'EOF'
+#!/usr/bin/env python3
+import json
+import sys
+import datetime
+import subprocess
+
+def send_alert(alert_data):
+    """Process and send custom alerts"""
+    
+    # Parse alert data
+    rule_name = alert_data.get('rule_name', 'Unknown Rule')
+    num_matches = alert_data.get('num_matches', 0)
+    
+    # Create alert message
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    alert_message = f"""
+    SECURITY ALERT - {timestamp}
+    ================================
+    Rule: {rule_name}
+    Matches: {num_matches}
+    
+    Event Details:
+    """
+    
+    # Add event details
+    for match in alert_data.get('matches', []):
+        alert_message += f"""
+    - Source IP: {match.get('source_ip', 'N/A')}
+    - Event Type: {match.get('event_type', 'N/A')}
+    - Severity: {match.get('severity', 'N/A')}
+    - Threat Score: {match.get('threat_score', 'N/A')}
+    - Timestamp: {match.get('@timestamp', 'N/A')}
+    """
+    
+    # Log alert to file
+    with open('/home/' + subprocess.getoutput('whoami') + '/elastalert/alerts.log', 'a') as f:
+        f.write(alert_message + "\n" + "="*50 + "\n")
+    
+    print(f"Alert processed: {rule_name}")
+    return True
+
+if __name__ == "__main__":
+    # Read alert data from stdin
+    alert_data = json.loads(sys.stdin.read())
+    send_alert(alert_data)
+EOF
+
+chmod +x custom_alert.py
+Task 5: Test and Refine Detection Workflows
+Subtask 5.1: Initialize Elastalert
+# Create Elastalert index
+elastalert-create-index
+
+# Test configuration
+elastalert-test-rule rules/high_severity_threats.yaml
+Subtask 5.2: Run Elastalert in Background
+# Start Elastalert
+nohup elastalert --config config.yaml --verbose > elastalert.log 2>&1 &
+
+# Check if Elastalert is running
+ps aux | grep elastalert
+Subtask 5.3: Generate Test Threats and Verify Alerts
+# Generate additional high-severity events to trigger alerts
+cat > trigger_alerts.py << 'EOF'
+#!/usr/bin/env python3
+import json
+import requests
+import datetime
+
+def create_high_severity_event():
+    event = {
+        "@timestamp": datetime.datetime.now().isoformat(),
+        "source_ip": "192.168.1.100",
+        "destination_ip": "192.168.1.10",
+        "source_port": 12345,
+        "destination_port": 80,
+        "protocol": "TCP",
+        "action": "blocked",
+        "severity": "high",
+        "event_type": "web_attack",
+        "user_agent": "sqlmap/1.0",
+        "url": "/admin/login.php",
+        "status_code": 403,
+        "threat_score": 95
+    }
+    
+    url = "http://localhost:9200/security-logs-2024/_doc"
+    headers = {"Content-Type": "application/json"}
+    response = requests.post(url, json=event, headers=headers)
+    return response.status_code == 201
+
+# Create multiple high-severity events
+for i in range(5):
+    if create_high_severity_event():
+        print(f"High-severity event {i+1} created")
+    else:
+        print(f"Failed to create event {i+1}")
+
+print("Test events generated. Check alerts.log for notifications.")
+EOF
+
+python3 trigger_alerts.py
+Subtask 5.4: Monitor and Verify Alerts
+# Check alert logs
+tail -f alerts.log
+
+# Check Elastalert status
+curl -X GET "localhost:9200/elastalert_status/_search?pretty"
+
+# View recent security events
+curl -X GET "localhost:9200/security-logs-*/_search?pretty" -H 'Content-Type: application/json' -d'
+{
+  "query": {
+    "range": {
+      "@timestamp": {
+        "gte": "now-10m"
+      }
+    }
+  },
+  "sort": [{"@timestamp": {"order": "desc"}}],
+  "size": 5
+}'
+Subtask 5.5: Access Kibana Dashboard
+# Check if Kibana is accessible
+curl -I http://localhost:5601
+
+echo "Access Kibana at: http://localhost:5601"
+echo "Create index pattern: security-logs-*"
+echo "Time field: @timestamp"
+Task 6: Create Advanced Detection Queries
+Subtask 6.1: Geographic Anomaly Detection
+# Query for geographic anomalies (multiple countries from same IP)
+curl -X GET "localhost:9200/security-logs-*/_search" -H 'Content-Type: application/json' -d'
+{
+  "size": 0,
+  "aggs": {
+    "ips_with_multiple_countries": {
+      "terms": {
+        "field": "source_ip",
+        "size": 100
+      },
+      "aggs": {
+        "countries": {
+          "terms": {
+            "field": "country",
+            "size": 10
+          }
+        },
+        "country_count": {
+          "cardinality": {
+            "field": "country"
+          }
+        },
+        "multiple_countries": {
+          "bucket_selector": {
+            "buckets_path": {
+              "country_count": "country_count"
+            },
+            "script": "params.country_count > 1"
+          }
+        }
+      }
+    }
+  }
+}'
+Subtask 6.2: Time-based Anomaly Detection
+# Query for unusual activity patterns (high activity during off-hours)
+curl -X GET "localhost:9200/security-logs-*/_search" -H 'Content-Type: application/json' -d'
+{
+  "size": 0,
+  "aggs": {
+    "activity_by_hour": {
+      "date_histogram": {
+        "field": "@timestamp",
+        "calendar_interval": "hour"
+      },
+      "aggs": {
+        "event_count": {
+          "value_count": {
+            "field": "@timestamp"
+          }
+        },
+        "high_severity_events": {
+          "filter": {
+            "term": {
+              "severity": "high"
+            }
+          }
+        }
+      }
+    }
+  }
+}'
+Verification and Testing
+Final Verification Steps
+# 1. Verify Elasticsearch is running and has data
+curl -X GET "localhost:9200/security-logs-*/_count"
+
+# 2. Check Elastalert is processing rules
+ps aux | grep elastalert
+
+# 3. Verify alerts are being generated
+ls -la alerts.log
+tail -5 alerts.log
+
+# 4. Test query performance
+time curl -X GET "localhost:9200/security-logs-*/_search" -H 'Content-Type: application/json' -d'
+{
+  "query": {
+    "bool": {
+      "must": [
+        {"term": {"severity": "high"}},
+        {"range": {"@timestamp": {"gte": "now-1h"}}}
+      ]
+    }
+  }
+}'
+
+echo "Threat detection workflow verification completed!"
+Conclusion
+You have successfully created an automated threat detection system using Elasticsearch. This lab covered:
+
+Installation and configuration of the Elasticsearch stack for security monitoring
+Creation of advanced queries for detecting various types of security threats
+Implementation of automated alerting using Elastalert2 for real-time threat response
+Testing and refinement of detection workflows with realistic security data
+This automated threat detection system provides real-time monitoring capabilities essential for modern cybersecurity operations. The skills learned here are directly applicable to SOC (Security Operations Center) environments and threat hunting activities in enterprise security settings.
+
+The combination of Elasticsearch's powerful search capabilities with automated alerting creates a robust foundation for proactive threat detection and incident response workflows.
