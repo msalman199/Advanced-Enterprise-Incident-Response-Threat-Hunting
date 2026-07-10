@@ -1,0 +1,37 @@
+name: Brute Force Attack Detection
+type: frequency
+index: security-logs-*
+num_events: 3
+timeframe:
+  minutes: 5
+
+filter:
+- bool:
+    must:
+    - term:
+        event_type: "brute_force"
+    - term:
+        status_code: 401
+
+query_key: source_ip
+
+alert:
+- "debug"
+
+alert_text: |
+  Brute force attack detected!
+  
+  Source IP: {0}
+  Number of attempts: {1}
+  Time window: 5 minutes
+
+alert_text_args:
+  - source_ip
+  - num_matches
+
+include:
+  - source_ip
+  - destination_ip
+  - url
+  - status_code
+  - "@timestamp"
