@@ -1,0 +1,4 @@
+TimeCreated,Id,LevelDisplayName,LogName,MachineName,UserId,ProcessId,ThreadId,Message
+2024-01-15T10:30:45.123Z,4624,Information,Security,WORKSTATION01,S-1-5-21-123456789-987654321-111111111-1001,1234,5678,"An account was successfully logged on"
+2024-01-15T10:31:12.456Z,4625,Information,Security,WORKSTATION01,S-1-5-21-123456789-987654321-111111111-1002,1235,5679,"An account failed to log on"
+2024-01-15T10:32:33.789Z,4648,Information,Security,WORKSTATION02,S-1-5-21-123456789-987654321-111111111-1003,1236,5680,"A logon was attempted using explicit credentials"
