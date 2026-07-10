@@ -1,0 +1,4 @@
+ComputerName,ProcessName,ProcessId,ParentProcessId,CommandLine,CreationDate
+WORKSTATION01,explorer.exe,1234,1000,C:\Windows\explorer.exe,2024-01-15T09:00:00Z
+WORKSTATION01,notepad.exe,5678,1234,C:\Windows\System32\notepad.exe document.txt,2024-01-15T10:15:00Z
+WORKSTATION02,powershell.exe,9999,1234,powershell.exe -ExecutionPolicy Bypass -File malicious.ps1,2024-01-15T10:30:00Z
