@@ -1,0 +1,16 @@
+{
+  "version": "8.11.0",
+  "objects": [
+    {
+      "id": "container-security-dashboard",
+      "type": "dashboard",
+      "attributes": {
+        "title": "Container Security Dashboard",
+        "description": "Container incident response dashboard",
+        "panelsJSON": "[{\"version\":\"8.11.0\",\"gridData\":{\"x\":0,\"y\":0,\"w\":24,\"h\":15,\"i\":\"1\"},\"panelIndex\":\"1\",\"embeddableConfig\":{},\"panelRefName\":\"panel_1\"}]",
+        "timeRestore": false,
+        "version": 1
+      }
+    }
+  ]
+}
