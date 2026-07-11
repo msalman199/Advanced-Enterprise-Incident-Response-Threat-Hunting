@@ -1,0 +1,785 @@
+Build Container Incident Response Workflow with Sysdig + ELK
+Learning Objectives
+By completing this lab, you will:
+
+Deploy and configure Sysdig Falco for container runtime security monitoring
+Set up ELK stack (Elasticsearch, Logstash, Kibana) for centralized log analysis
+Create automated incident response workflows using container security events
+Build comprehensive dashboards for container security monitoring
+Implement alerting mechanisms for container security incidents
+Prerequisites
+Basic understanding of Linux command line
+Familiarity with Docker containers
+Knowledge of YAML configuration files
+Understanding of log analysis concepts
+Lab Environment
+Al Nafi provides a Linux-based cloud machine for this lab. Simply click Start Lab to access your dedicated environment. The machine comes as bare metal with no pre-installed tools, so you'll install all required components during the lab.
+
+Task 1: Install and Configure Docker Environment
+Step 1.1: Install Docker
+# Update system packages
+sudo apt update && sudo apt upgrade -y
+
+# Install Docker dependencies
+sudo apt install -y apt-transport-https ca-certificates curl gnupg lsb-release
+
+# Add Docker GPG key
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+# Add Docker repository
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Install Docker
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+# Start and enable Docker
+sudo systemctl start docker
+sudo systemctl enable docker
+
+# Add user to docker group
+sudo usermod -aG docker $USER
+newgrp docker
+Step 1.2: Install Docker Compose
+# Install Docker Compose
+sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+sudo chmod +x /usr/local/bin/docker-compose
+
+# Verify installation
+docker --version
+docker-compose --version
+Task 2: Deploy Sysdig Falco for Container Security Monitoring
+Step 2.1: Install Falco
+# Add Falco repository
+curl -s https://falco.org/repo/falcosecurity-packages.asc | sudo apt-key add -
+echo "deb https://download.falco.org/packages/deb stable main" | sudo tee -a /etc/apt/sources.list.d/falcosecurity.list
+
+# Install Falco
+sudo apt update
+sudo apt install -y falco
+
+# Install kernel headers for Falco driver
+sudo apt install -y linux-headers-$(uname -r)
+Step 2.2: Configure Falco for Container Monitoring
+# Create custom Falco configuration
+sudo tee /etc/falco/falco_custom.yaml > /dev/null <<EOF
+rules_file:
+  - /etc/falco/falco_rules.yaml
+  - /etc/falco/falco_rules.local.yaml
+  - /etc/falco/k8s_audit_rules.yaml
+  - /etc/falco/rules.d
+
+time_format_iso_8601: true
+json_output: true
+json_include_output_property: true
+
+file_output:
+  enabled: true
+  keep_alive: false
+  filename: /var/log/falco/events.log
+
+stdout_output:
+  enabled: true
+
+syslog_output:
+  enabled: false
+
+program_output:
+  enabled: false
+
+http_output:
+  enabled: false
+
+grpc:
+  enabled: false
+
+grpc_output:
+  enabled: false
+
+webserver:
+  enabled: true
+  listen_port: 8765
+  k8s_healthz_endpoint: /healthz
+  ssl_enabled: false
+  ssl_certificate: /etc/falco/falco.pem
+
+syscall_event_drops:
+  actions:
+    - log
+    - alert
+  rate: 0.03333
+  max_burst: 1000
+
+syscall_event_timeouts:
+  max_consecutives: 1000
+
+load_plugins: []
+
+plugins: []
+
+watch_config_files: true
+
+buffered_outputs: false
+
+syscall_buf_size_preset: 4
+
+modern_bpf:
+  cpus_for_each_syscall_buffer: 2
+
+falco_libs:
+  thread_table_size: 262144
+EOF
+
+# Create log directory
+sudo mkdir -p /var/log/falco
+sudo chown falco:falco /var/log/falco
+Step 2.3: Create Custom Falco Rules
+# Create custom rules for container incidents
+sudo tee /etc/falco/rules.d/container_security.yaml > /dev/null <<EOF
+- rule: Container Privilege Escalation
+  desc: Detect privilege escalation in containers
+  condition: >
+    spawned_process and container and
+    (proc.name in (sudo, su, doas) or
+     (proc.args contains "--privileged" or
+      proc.args contains "cap_sys_admin"))
+  output: >
+    Container privilege escalation detected
+    (user=%user.name command=%proc.cmdline container=%container.name
+     image=%container.image.repository:%container.image.tag)
+  priority: WARNING
+  tags: [container, privilege_escalation]
+
+- rule: Suspicious Container Network Activity
+  desc: Detect suspicious network connections from containers
+  condition: >
+    inbound_outbound and container and
+    (fd.sport in (22, 23, 3389, 5900) or
+     fd.dport in (22, 23, 3389, 5900))
+  output: >
+    Suspicious network activity in container
+    (user=%user.name connection=%fd.name container=%container.name
+     image=%container.image.repository:%container.image.tag)
+  priority: WARNING
+  tags: [container, network, suspicious]
+
+- rule: Container File System Modification
+  desc: Detect unauthorized file system modifications in containers
+  condition: >
+    open_write and container and
+    (fd.name startswith /etc/ or
+     fd.name startswith /usr/bin/ or
+     fd.name startswith /usr/sbin/ or
+     fd.name startswith /bin/ or
+     fd.name startswith /sbin/)
+  output: >
+    Unauthorized file modification in container
+    (user=%user.name file=%fd.name container=%container.name
+     image=%container.image.repository:%container.image.tag)
+  priority: WARNING
+  tags: [container, filesystem, modification]
+
+- rule: Container Shell Spawned
+  desc: Detect shell spawned in container
+  condition: >
+    spawned_process and container and
+    proc.name in (bash, sh, zsh, csh, ksh, fish)
+  output: >
+    Shell spawned in container
+    (user=%user.name shell=%proc.name container=%container.name
+     image=%container.image.repository:%container.image.tag)
+  priority: INFO
+  tags: [container, shell]
+EOF
+Step 2.4: Start Falco Service
+# Start Falco with custom configuration
+sudo systemctl start falco
+sudo systemctl enable falco
+
+# Verify Falco is running
+sudo systemctl status falco
+
+# Check Falco logs
+sudo tail -f /var/log/falco/events.log &
+Task 3: Deploy ELK Stack for Log Analysis
+Step 3.1: Create ELK Stack Docker Compose
+# Create ELK directory structure
+mkdir -p ~/elk-stack/{elasticsearch,logstash,kibana}
+cd ~/elk-stack
+
+# Create Docker Compose file for ELK stack
+tee docker-compose.yml > /dev/null <<EOF
+version: '3.8'
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - elk
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    container_name: logstash
+    ports:
+      - "5044:5044"
+      - "9600:9600"
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline
+      - ./logstash/config:/usr/share/logstash/config
+      - /var/log/falco:/var/log/falco:ro
+    depends_on:
+      - elasticsearch
+    networks:
+      - elk
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    networks:
+      - elk
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.11.0
+    container_name: filebeat
+    user: root
+    volumes:
+      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - /var/log/falco:/var/log/falco:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - elasticsearch
+      - logstash
+    networks:
+      - elk
+
+volumes:
+  elasticsearch_data:
+
+networks:
+  elk:
+    driver: bridge
+EOF
+Step 3.2: Configure Logstash Pipeline
+# Create Logstash configuration directory
+mkdir -p logstash/{config,pipeline}
+
+# Create Logstash configuration
+tee logstash/config/logstash.yml > /dev/null <<EOF
+http.host: "0.0.0.0"
+xpack.monitoring.elasticsearch.hosts: [ "http://elasticsearch:9200" ]
+path.config: /usr/share/logstash/pipeline
+EOF
+
+# Create Logstash pipeline for Falco events
+tee logstash/pipeline/falco.conf > /dev/null <<EOF
+input {
+  beats {
+    port => 5044
+  }
+  file {
+    path => "/var/log/falco/events.log"
+    start_position => "beginning"
+    codec => "json"
+    tags => ["falco"]
+  }
+}
+
+filter {
+  if "falco" in [tags] {
+    mutate {
+      add_field => { "event_type" => "security" }
+    }
+    
+    if [priority] {
+      mutate {
+        add_field => { "severity" => "%{priority}" }
+      }
+    }
+    
+    if [rule] {
+      mutate {
+        add_field => { "security_rule" => "%{rule}" }
+      }
+    }
+    
+    date {
+      match => [ "time", "ISO8601" ]
+      target => "@timestamp"
+    }
+  }
+  
+  if [fields][container_name] {
+    mutate {
+      add_field => { "container_info" => "%{[fields][container_name]}" }
+    }
+  }
+}
+
+output {
+  elasticsearch {
+    hosts => ["elasticsearch:9200"]
+    index => "container-security-%{+YYYY.MM.dd}"
+  }
+  
+  stdout {
+    codec => rubydebug
+  }
+}
+EOF
+Step 3.3: Configure Filebeat
+# Create Filebeat configuration directory
+mkdir -p filebeat
+
+# Create Filebeat configuration
+tee filebeat/filebeat.yml > /dev/null <<EOF
+filebeat.inputs:
+- type: log
+  enabled: true
+  paths:
+    - /var/log/falco/events.log
+  json.keys_under_root: true
+  json.add_error_key: true
+  fields:
+    log_type: falco
+    environment: lab
+
+- type: container
+  enabled: true
+  paths:
+    - '/var/lib/docker/containers/*/*.log'
+  fields:
+    log_type: container
+    environment: lab
+
+processors:
+- add_docker_metadata:
+    host: "unix:///var/run/docker.sock"
+
+output.logstash:
+  hosts: ["logstash:5044"]
+
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: /var/log/filebeat
+  name: filebeat
+  keepfiles: 7
+  permissions: 0644
+EOF
+Step 3.4: Deploy ELK Stack
+# Start ELK stack
+docker-compose up -d
+
+# Wait for services to start
+sleep 60
+
+# Verify services are running
+docker-compose ps
+
+# Check Elasticsearch health
+curl -X GET "localhost:9200/_cluster/health?pretty"
+
+# Check if Kibana is accessible
+curl -I http://localhost:5601
+Task 4: Create Test Container Environment
+Step 4.1: Deploy Test Containers
+# Create test containers to generate security events
+docker run -d --name test-nginx nginx:latest
+
+# Run a privileged container (will trigger Falco alert)
+docker run -d --name test-privileged --privileged alpine:latest sleep 3600
+
+# Create a container with suspicious activity
+docker run -d --name test-suspicious alpine:latest sh -c "while true; do nc -l -p 22; sleep 10; done"
+Step 4.2: Generate Security Events
+# Execute commands in containers to trigger Falco rules
+docker exec test-nginx bash -c "echo 'test' > /etc/test.conf"
+docker exec test-privileged sh -c "mount -t tmpfs tmpfs /mnt"
+docker exec test-suspicious sh -c "wget http://example.com"
+
+# Check Falco logs for generated events
+sudo tail -20 /var/log/falco/events.log
+Task 5: Build Security Dashboards in Kibana
+Step 5.1: Access Kibana and Create Index Pattern
+# Open Kibana in browser (if GUI available) or use curl for verification
+echo "Kibana is available at: http://localhost:5601"
+curl -X GET "localhost:5601/api/status"
+Step 5.2: Create Index Pattern via API
+# Wait for data to be indexed
+sleep 30
+
+# Create index pattern for container security logs
+curl -X POST "localhost:5601/api/saved_objects/index-pattern/container-security" \
+  -H "Content-Type: application/json" \
+  -H "kbn-xsrf: true" \
+  -d '{
+    "attributes": {
+      "title": "container-security-*",
+      "timeFieldName": "@timestamp"
+    }
+  }'
+Step 5.3: Create Security Dashboard Configuration
+# Create dashboard configuration file
+tee kibana_dashboard.json > /dev/null <<EOF
+{
+  "version": "8.11.0",
+  "objects": [
+    {
+      "id": "container-security-dashboard",
+      "type": "dashboard",
+      "attributes": {
+        "title": "Container Security Dashboard",
+        "description": "Container incident response dashboard",
+        "panelsJSON": "[{\"version\":\"8.11.0\",\"gridData\":{\"x\":0,\"y\":0,\"w\":24,\"h\":15,\"i\":\"1\"},\"panelIndex\":\"1\",\"embeddableConfig\":{},\"panelRefName\":\"panel_1\"}]",
+        "timeRestore": false,
+        "version": 1
+      }
+    }
+  ]
+}
+EOF
+
+# Import dashboard (simplified approach)
+echo "Dashboard configuration created. In a full environment, this would be imported via Kibana UI."
+Task 6: Implement Automated Alerting
+Step 6.1: Create Alert Script
+# Create alerting script directory
+mkdir -p ~/incident-response
+
+# Create incident response script
+tee ~/incident-response/alert_handler.sh > /dev/null <<'EOF'
+#!/bin/bash
+
+ALERT_THRESHOLD=5
+LOG_FILE="/var/log/falco/events.log"
+ALERT_LOG="/var/log/incident-alerts.log"
+
+# Function to send alert
+send_alert() {
+    local message="$1"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    echo "[$timestamp] SECURITY ALERT: $message" | tee -a "$ALERT_LOG"
+    
+    # In production, this could send to Slack, email, or SIEM
+    logger "CONTAINER_SECURITY_ALERT: $message"
+}
+
+# Function to analyze recent events
+analyze_events() {
+    local recent_events=$(tail -100 "$LOG_FILE" | grep -c "WARNING\|ERROR")
+    
+    if [ "$recent_events" -gt "$ALERT_THRESHOLD" ]; then
+        send_alert "High number of security events detected: $recent_events events in last 100 log entries"
+    fi
+}
+
+# Function to check for specific threats
+check_threats() {
+    local privilege_escalation=$(tail -50 "$LOG_FILE" | grep -c "privilege escalation")
+    local suspicious_network=$(tail -50 "$LOG_FILE" | grep -c "Suspicious network")
+    local file_modification=$(tail -50 "$LOG_FILE" | grep -c "file modification")
+    
+    if [ "$privilege_escalation" -gt 0 ]; then
+        send_alert "Privilege escalation detected in containers"
+    fi
+    
+    if [ "$suspicious_network" -gt 0 ]; then
+        send_alert "Suspicious network activity detected in containers"
+    fi
+    
+    if [ "$file_modification" -gt 0 ]; then
+        send_alert "Unauthorized file modifications detected in containers"
+    fi
+}
+
+# Main execution
+main() {
+    if [ -f "$LOG_FILE" ]; then
+        analyze_events
+        check_threats
+    else
+        echo "Falco log file not found: $LOG_FILE"
+        exit 1
+    fi
+}
+
+main "$@"
+EOF
+
+# Make script executable
+chmod +x ~/incident-response/alert_handler.sh
+Step 6.2: Create Automated Response Actions
+# Create incident response playbook
+tee ~/incident-response/response_actions.sh > /dev/null <<'EOF'
+#!/bin/bash
+
+# Function to isolate suspicious container
+isolate_container() {
+    local container_name="$1"
+    echo "Isolating container: $container_name"
+    
+    # Remove container from networks (except default)
+    docker network ls --format "{{.Name}}" | grep -v bridge | while read network; do
+        docker network disconnect "$network" "$container_name" 2>/dev/null || true
+    done
+    
+    # Log isolation action
+    logger "INCIDENT_RESPONSE: Container $container_name isolated from networks"
+}
+
+# Function to collect forensic data
+collect_forensics() {
+    local container_name="$1"
+    local timestamp=$(date '+%Y%m%d_%H%M%S')
+    local forensics_dir="/tmp/forensics_${container_name}_${timestamp}"
+    
+    mkdir -p "$forensics_dir"
+    
+    # Collect container information
+    docker inspect "$container_name" > "$forensics_dir/container_inspect.json"
+    docker logs "$container_name" > "$forensics_dir/container_logs.txt"
+    docker exec "$container_name" ps aux > "$forensics_dir/processes.txt" 2>/dev/null || true
+    docker exec "$container_name" netstat -tulpn > "$forensics_dir/network.txt" 2>/dev/null || true
+    
+    echo "Forensic data collected in: $forensics_dir"
+    logger "INCIDENT_RESPONSE: Forensic data collected for container $container_name"
+}
+
+# Function to stop malicious container
+stop_container() {
+    local container_name="$1"
+    echo "Stopping malicious container: $container_name"
+    docker stop "$container_name"
+    logger "INCIDENT_RESPONSE: Container $container_name stopped due to security incident"
+}
+
+# Main response function
+respond_to_incident() {
+    local incident_type="$1"
+    local container_name="$2"
+    
+    case "$incident_type" in
+        "privilege_escalation")
+            collect_forensics "$container_name"
+            isolate_container "$container_name"
+            ;;
+        "suspicious_network")
+            collect_forensics "$container_name"
+            isolate_container "$container_name"
+            ;;
+        "file_modification")
+            collect_forensics "$container_name"
+            ;;
+        "critical")
+            collect_forensics "$container_name"
+            stop_container "$container_name"
+            ;;
+        *)
+            echo "Unknown incident type: $incident_type"
+            ;;
+    esac
+}
+
+# Example usage
+if [ "$#" -eq 2 ]; then
+    respond_to_incident "$1" "$2"
+else
+    echo "Usage: $0 <incident_type> <container_name>"
+    echo "Incident types: privilege_escalation, suspicious_network, file_modification, critical"
+fi
+EOF
+
+# Make script executable
+chmod +x ~/incident-response/response_actions.sh
+Step 6.3: Set Up Monitoring Cron Job
+# Create cron job for continuous monitoring
+(crontab -l 2>/dev/null; echo "*/5 * * * * ~/incident-response/alert_handler.sh") | crontab -
+
+# Verify cron job
+crontab -l
+Task 7: Test Incident Response Workflow
+Step 7.1: Trigger Security Events
+# Generate various security events for testing
+echo "Generating security events for testing..."
+
+# Privilege escalation event
+docker exec test-privileged sh -c "sudo echo 'test'" 2>/dev/null || true
+
+# File modification event
+docker exec test-nginx bash -c "echo 'malicious content' > /etc/passwd.backup"
+
+# Network activity event
+docker exec test-suspicious sh -c "nc -l -p 22 &"
+
+# Wait for events to be processed
+sleep 10
+Step 7.2: Verify Alert Generation
+# Check alert logs
+echo "=== Recent Security Alerts ==="
+tail -10 /var/log/incident-alerts.log 2>/dev/null || echo "No alerts generated yet"
+
+# Check system logs for incident responses
+echo "=== System Logs (Incident Response) ==="
+journalctl -n 20 | grep "CONTAINER_SECURITY_ALERT\|INCIDENT_RESPONSE" || echo "No incident response logs found"
+
+# Check Falco events
+echo "=== Recent Falco Events ==="
+tail -5 /var/log/falco/events.log
+Step 7.3: Test Response Actions
+# Test incident response for a container
+echo "Testing incident response workflow..."
+
+# Simulate response to privilege escalation
+~/incident-response/response_actions.sh privilege_escalation test-privileged
+
+# Check if forensic data was collected
+ls -la /tmp/forensics_* 2>/dev/null || echo "No forensic data found"
+
+# Verify container isolation
+docker inspect test-privileged | grep -A 10 "Networks" || echo "Container may have been stopped"
+Task 8: Verify ELK Integration
+Step 8.1: Check Data Flow
+# Verify Elasticsearch indices
+curl -X GET "localhost:9200/_cat/indices?v" | grep container-security
+
+# Check document count
+curl -X GET "localhost:9200/container-security-*/_count?pretty"
+
+# Sample search for security events
+curl -X GET "localhost:9200/container-security-*/_search?pretty" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": {
+      "match": {
+        "priority": "WARNING"
+      }
+    },
+    "size": 5
+  }'
+Step 8.2: Verify Log Processing
+# Check Logstash processing
+docker logs logstash | tail -20
+
+# Check Filebeat status
+docker logs filebeat | tail -10
+
+# Verify log ingestion
+echo "=== Log Ingestion Status ==="
+curl -X GET "localhost:9200/_cluster/stats?pretty" | grep -A 5 "docs"
+Task 9: Create Incident Response Summary
+Step 9.1: Generate Incident Report
+# Create incident summary script
+tee ~/incident-response/generate_report.sh > /dev/null <<'EOF'
+#!/bin/bash
+
+REPORT_FILE="/tmp/incident_report_$(date +%Y%m%d_%H%M%S).txt"
+
+echo "Container Security Incident Report" > "$REPORT_FILE"
+echo "Generated: $(date)" >> "$REPORT_FILE"
+echo "=================================" >> "$REPORT_FILE"
+echo "" >> "$REPORT_FILE"
+
+# Security events summary
+echo "SECURITY EVENTS SUMMARY:" >> "$REPORT_FILE"
+echo "------------------------" >> "$REPORT_FILE"
+if [ -f "/var/log/falco/events.log" ]; then
+    echo "Total events: $(wc -l < /var/log/falco/events.log)" >> "$REPORT_FILE"
+    echo "Warning events: $(grep -c 'WARNING' /var/log/falco/events.log 2>/dev/null || echo 0)" >> "$REPORT_FILE"
+    echo "Error events: $(grep -c 'ERROR' /var/log/falco/events.log 2>/dev/null || echo 0)" >> "$REPORT_FILE"
+else
+    echo "No Falco events log found" >> "$REPORT_FILE"
+fi
+echo "" >> "$REPORT_FILE"
+
+# Container status
+echo "CONTAINER STATUS:" >> "$REPORT_FILE"
+echo "-----------------" >> "$REPORT_FILE"
+docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Image}}" >> "$REPORT_FILE"
+echo "" >> "$REPORT_FILE"
+
+# Recent alerts
+echo "RECENT ALERTS:" >> "$REPORT_FILE"
+echo "--------------" >> "$REPORT_FILE"
+if [ -f "/var/log/incident-alerts.log" ]; then
+    tail -10 /var/log/incident-alerts.log >> "$REPORT_FILE"
+else
+    echo "No alerts generated" >> "$REPORT_FILE"
+fi
+echo "" >> "$REPORT_FILE"
+
+# Forensic data
+echo "FORENSIC DATA COLLECTED:" >> "$REPORT_FILE"
+echo "------------------------" >> "$REPORT_FILE"
+ls -la /tmp/forensics_* 2>/dev/null >> "$REPORT_FILE" || echo "No forensic data collected" >> "$REPORT_FILE"
+
+echo "Report generated: $REPORT_FILE"
+cat "$REPORT_FILE"
+EOF
+
+chmod +x ~/incident-response/generate_report.sh
+
+# Generate final report
+~/incident-response/generate_report.sh
+Task 10: Cleanup and Verification
+Step 10.1: Verify Complete Workflow
+# Final verification of all components
+echo "=== WORKFLOW VERIFICATION ==="
+
+# Check Falco status
+echo "1. Falco Status:"
+sudo systemctl is-active falco
+
+# Check ELK stack status
+echo "2. ELK Stack Status:"
+docker-compose ps
+
+# Check data in Elasticsearch
+echo "3. Elasticsearch Data:"
+curl -s "localhost:9200/_cat/indices?v" | grep container-security | wc -l
+
+# Check alert system
+echo "4. Alert System:"
+ls -la ~/incident-response/
+
+# Check log files
+echo "5. Log Files:"
+ls -la /var/log/falco/ /var/log/incident-alerts.log 2>/dev/null || echo "Some log files not found"
+
+echo "=== VERIFICATION COMPLETE ==="
+Step 10.2: Optional Cleanup
+# Stop test containers (optional)
+docker stop test-nginx test-privileged test-suspicious
+docker rm test-nginx test-privileged test-suspicious
+
+# Keep ELK stack running for continued monitoring
+echo "ELK stack continues running for ongoing monitoring"
+echo "To stop ELK stack: cd ~/elk-stack && docker-compose down"
+Conclusion
+You have successfully built a comprehensive container incident response workflow using Sysdig Falco and the ELK stack. This lab demonstrated:
+
+Container Security Monitoring: Deployed Falco to detect runtime security threats in containers
+Centralized Logging: Configured ELK stack to collect, process, and analyze container security events
+Automated Alerting: Implemented scripts to automatically detect and respond to security incidents
+Incident Response: Created automated response actions including container isolation and forensic data collection
+Dashboard Creation: Set up Kibana for visualizing security events and monitoring container environments
+This workflow provides a foundation for enterprise-level container security monitoring and incident response. The combination of real-time threat detection with automated response capabilities significantly reduces the time between threat detection and mitigation, which is crucial for maintaining secure containerized environments.
+
+The skills learned in this lab are directly applicable to DevSecOps roles, security engineering positions, and container platform management in production environments.
