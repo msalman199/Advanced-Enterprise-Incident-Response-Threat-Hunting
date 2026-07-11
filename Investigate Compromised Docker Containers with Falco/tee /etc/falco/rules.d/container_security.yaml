@@ -1,0 +1,41 @@
+- rule: Suspicious Container Network Activity
+  desc: Detect suspicious network connections from containers
+  condition: >
+    spawned_process and container and
+    (proc.name in (nc, ncat, netcat, wget, curl) and
+     proc.args contains "-e" or proc.args contains "/bin/sh")
+  output: >
+    Suspicious network activity in container
+    (user=%user.name command=%proc.cmdline container=%container.name
+     image=%container.image.repository)
+  priority: WARNING
+  tags: [container, network, suspicious]
+
+- rule: Container Privilege Escalation
+  desc: Detect privilege escalation attempts in containers
+  condition: >
+    spawned_process and container and
+    (proc.name in (sudo, su, passwd) or
+     proc.args contains "chmod +s" or
+     proc.args contains "setuid")
+  output: >
+    Privilege escalation attempt in container
+    (user=%user.name command=%proc.cmdline container=%container.name
+     image=%container.image.repository)
+  priority: CRITICAL
+  tags: [container, privilege_escalation]
+
+- rule: Suspicious File Access in Container
+  desc: Detect access to sensitive files in containers
+  condition: >
+    open_read and container and
+    (fd.name startswith /etc/passwd or
+     fd.name startswith /etc/shadow or
+     fd.name startswith /root/.ssh or
+     fd.name startswith /home/*/.ssh)
+  output: >
+    Sensitive file access in container
+    (user=%user.name file=%fd.name container=%container.name
+     image=%container.image.repository)
+  priority: WARNING
+  tags: [container, file_access, sensitive]
