@@ -1,0 +1,54 @@
+- rule: Container Privilege Escalation
+  desc: Detect privilege escalation in containers
+  condition: >
+    spawned_process and container and
+    (proc.name in (sudo, su, doas) or
+     (proc.args contains "--privileged" or
+      proc.args contains "cap_sys_admin"))
+  output: >
+    Container privilege escalation detected
+    (user=%user.name command=%proc.cmdline container=%container.name
+     image=%container.image.repository:%container.image.tag)
+  priority: WARNING
+  tags: [container, privilege_escalation]
+
+- rule: Suspicious Container Network Activity
+  desc: Detect suspicious network connections from containers
+  condition: >
+    inbound_outbound and container and
+    (fd.sport in (22, 23, 3389, 5900) or
+     fd.dport in (22, 23, 3389, 5900))
+  output: >
+    Suspicious network activity in container
+    (user=%user.name connection=%fd.name container=%container.name
+     image=%container.image.repository:%container.image.tag)
+  priority: WARNING
+  tags: [container, network, suspicious]
+
+- rule: Container File System Modification
+  desc: Detect unauthorized file system modifications in containers
+  condition: >
+    open_write and container and
+    (fd.name startswith /etc/ or
+     fd.name startswith /usr/bin/ or
+     fd.name startswith /usr/sbin/ or
+     fd.name startswith /bin/ or
+     fd.name startswith /sbin/)
+  output: >
+    Unauthorized file modification in container
+    (user=%user.name file=%fd.name container=%container.name
+     image=%container.image.repository:%container.image.tag)
+  priority: WARNING
+  tags: [container, filesystem, modification]
+
+- rule: Container Shell Spawned
+  desc: Detect shell spawned in container
+  condition: >
+    spawned_process and container and
+    proc.name in (bash, sh, zsh, csh, ksh, fish)
+  output: >
+    Shell spawned in container
+    (user=%user.name shell=%proc.name container=%container.name
+     image=%container.image.repository:%container.image.tag)
+  priority: INFO
+  tags: [container, shell]
